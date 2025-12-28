@@ -1,0 +1,30 @@
+{
+  "server_name": "imessage-life-planner",
+  "version": "0.1.0",
+  "description": "Personalized iMessage MCP server with life planner integration",
+
+  "paths": {
+    "life_planner_db": "../data/database/planner.db",
+    "messages_db": "~/Library/Messages/chat.db",
+    "contacts_config": "config/contacts.json"
+  },
+
+  "contacts_sync": {
+    "enabled": false,
+    "auto_sync_interval_hours": 24,
+    "fuzzy_match_threshold": 0.85
+  },
+
+  "logging": {
+    "level": "INFO",
+    "file": "logs/mcp_server.log",
+    "max_size_mb": 10,
+    "backup_count": 5
+  },
+
+  "features": {
+    "style_learning": false,
+    "context_integration": false,
+    "auto_interaction_logging": true
+  }
+}
