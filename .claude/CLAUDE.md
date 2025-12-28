@@ -113,12 +113,7 @@ Phone normalization: `+1 (415) 555-1234` → `14155551234`
 
 ## Claude Code Skill
 
-This project includes a skill at `.claude/skills/imessage-texting/SKILL.md` that provides:
-- Natural language message sending ("text John saying I'm late")
-- Conversation lookup and search
-- Message drafting guidelines to match your style
-
-The skill wraps the MCP tools with guidance for common workflows.
+This project includes a skill at `.claude/skills/imessage-texting/SKILL.md` with usage examples for each MCP tool.
 
 ## Troubleshooting
 

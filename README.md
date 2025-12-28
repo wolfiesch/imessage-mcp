@@ -168,15 +168,9 @@ Optional settings in `config/mcp_server.json`:
 
 ## Claude Code Skill (Optional)
 
-This repo includes a Claude Code skill at `.claude/skills/imessage-texting/` that provides additional guidance for natural language messaging workflows.
+This repo includes a Claude Code skill at `.claude/skills/imessage-texting/` with usage examples for each MCP tool.
 
-The skill teaches Claude how to:
-- Draft messages that sound natural (not robotic AI-speak)
-- Handle contact lookup failures gracefully
-- Confirm before sending messages
-- Search and summarize conversations
-
-To use the skill, just clone this repo into your project - Claude Code will automatically pick up the skill from the `.claude/skills/` directory.
+To use it, clone this repo - Claude Code will automatically pick up the skill from the `.claude/skills/` directory.
 
 ## Development
 
