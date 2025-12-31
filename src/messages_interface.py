@@ -1899,3 +1899,450 @@ class MessagesInterface:
         # This is essentially the same as get_recent_messages but with
         # a clearer interface for the MCP tool
         return self.get_recent_messages(phone=phone, limit=limit)
+
+    # ===== T2 FEATURES =====
+
+    def get_conversation_for_summary(
+        self,
+        phone: str,
+        days: Optional[int] = None,
+        limit: int = 200
+    ) -> Dict:
+        """
+        Get conversation data formatted for AI summarization.
+
+        T2 Feature: Prepares conversation history in a structured format
+        that Claude can easily summarize.
+
+        Args:
+            phone: Contact phone number or handle
+            days: Optional limit to last N days
+            limit: Maximum messages to include
+
+        Returns:
+            Dict: Formatted conversation data including:
+                - phone: The contact identifier
+                - message_count: Total messages retrieved
+                - date_range: {start, end} dates of conversation
+                - conversation_text: Formatted dialogue for summarization
+                - key_stats: {sent, received, avg_length, topics_mentioned}
+                - recent_topics: Detected topics/keywords
+                - last_interaction: When the last message was
+
+        Example:
+            data = interface.get_conversation_for_summary(phone="+14155551234", days=7)
+            # Pass data['conversation_text'] to Claude for summarization
+        """
+        logger.info(f"Getting conversation for summary (phone: {phone}, days: {days})")
+
+        if not self.messages_db_path.exists():
+            logger.error(f"Messages database not found: {self.messages_db_path}")
+            return {}
+
+        try:
+            conn = sqlite3.connect(f"file:{self.messages_db_path}?mode=ro", uri=True)
+            cursor = conn.cursor()
+
+            # Build query
+            query = """
+                SELECT
+                    m.text,
+                    m.attributedBody,
+                    m.date,
+                    m.is_from_me
+                FROM message m
+                JOIN handle h ON m.handle_id = h.ROWID
+                WHERE h.id LIKE ?
+                    AND (m.associated_message_type IS NULL OR m.associated_message_type = 0)
+                    AND m.item_type = 0
+            """
+            params = [f"%{phone}%"]
+
+            if days:
+                cutoff_date = datetime.now() - timedelta(days=days)
+                cocoa_epoch = datetime(2001, 1, 1)
+                cutoff_cocoa = int((cutoff_date - cocoa_epoch).total_seconds() * 1_000_000_000)
+                query += " AND m.date >= ?"
+                params.append(cutoff_cocoa)
+
+            query += " ORDER BY m.date ASC LIMIT ?"
+            params.append(limit)
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            if not rows:
+                conn.close()
+                return {
+                    "phone": phone,
+                    "message_count": 0,
+                    "conversation_text": "",
+                    "error": "No messages found"
+                }
+
+            # Process messages
+            messages = []
+            sent_count = 0
+            received_count = 0
+            total_length = 0
+            word_freq = {}
+
+            for row in rows:
+                text, attributed_body, date_cocoa, is_from_me = row
+
+                # Extract text
+                message_text = text
+                if not message_text and attributed_body:
+                    message_text = extract_text_from_blob(attributed_body)
+
+                if not message_text:
+                    continue
+
+                # Convert timestamp
+                if date_cocoa:
+                    cocoa_epoch = datetime(2001, 1, 1)
+                    date = cocoa_epoch + timedelta(seconds=date_cocoa / 1_000_000_000)
+                else:
+                    date = datetime.now()
+
+                # Track stats
+                if is_from_me:
+                    sent_count += 1
+                    sender = "You"
+                else:
+                    received_count += 1
+                    sender = "Them"
+
+                total_length += len(message_text)
+
+                # Simple word frequency for topic detection
+                words = re.findall(r'\b\w{4,}\b', message_text.lower())
+                for word in words:
+                    if word not in {'that', 'this', 'with', 'from', 'have', 'just', 'what', 'when', 'where', 'would', 'could', 'should', 'about', 'their', 'there', 'these', 'those', 'been', 'were', 'will', 'your', 'some', 'them'}:
+                        word_freq[word] = word_freq.get(word, 0) + 1
+
+                messages.append({
+                    "date": date,
+                    "sender": sender,
+                    "text": message_text
+                })
+
+            conn.close()
+
+            if not messages:
+                return {
+                    "phone": phone,
+                    "message_count": 0,
+                    "conversation_text": "",
+                    "error": "No text messages found"
+                }
+
+            # Build formatted conversation text
+            conversation_lines = []
+            current_date = None
+
+            for msg in messages:
+                msg_date = msg["date"].strftime("%Y-%m-%d")
+                if msg_date != current_date:
+                    conversation_lines.append(f"\n=== {msg_date} ===\n")
+                    current_date = msg_date
+
+                time_str = msg["date"].strftime("%H:%M")
+                conversation_lines.append(f"[{time_str}] {msg['sender']}: {msg['text']}")
+
+            # Get top topics
+            top_topics = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)[:10]
+
+            result = {
+                "phone": phone,
+                "message_count": len(messages),
+                "date_range": {
+                    "start": messages[0]["date"].isoformat(),
+                    "end": messages[-1]["date"].isoformat()
+                },
+                "conversation_text": "\n".join(conversation_lines),
+                "key_stats": {
+                    "sent": sent_count,
+                    "received": received_count,
+                    "avg_message_length": round(total_length / len(messages)) if messages else 0,
+                },
+                "recent_topics": [word for word, count in top_topics if count >= 2],
+                "last_interaction": messages[-1]["date"].isoformat()
+            }
+
+            logger.info(f"Prepared summary data: {len(messages)} messages")
+            return result
+
+        except sqlite3.Error as e:
+            logger.error(f"Database error: {e}")
+            return {"error": str(e)}
+        except Exception as e:
+            logger.error(f"Error getting conversation for summary: {e}")
+            return {"error": str(e)}
+
+    # Follow-up detection patterns
+    FOLLOW_UP_PATTERNS = {
+        "question": [
+            r'\?$',  # Ends with question mark
+            r'\bwhat\b.*\?',
+            r'\bhow\b.*\?',
+            r'\bwhen\b.*\?',
+            r'\bwhere\b.*\?',
+            r'\bwhy\b.*\?',
+            r'\bcan you\b',
+            r'\bcould you\b',
+            r'\bwould you\b',
+        ],
+        "promise": [
+            r'\bi\'ll\b',
+            r'\bi will\b',
+            r'\blet me\b',
+            r'\bgonna\b',
+            r'\bgoing to\b',
+            r'\bwill do\b',
+            r'\bwill get\b',
+            r'\bwill send\b',
+            r'\bwill check\b',
+        ],
+        "waiting": [
+            r'\bwaiting for\b',
+            r'\blet me know\b',
+            r'\bget back to\b',
+            r'\bhear from\b',
+            r'\bkeep me posted\b',
+            r'\bkeep me updated\b',
+            r'\blmk\b',
+        ],
+        "time_reference": [
+            r'\btomorrow\b',
+            r'\bnext week\b',
+            r'\bmonday\b',
+            r'\btuesday\b',
+            r'\bwednesday\b',
+            r'\bthursday\b',
+            r'\bfriday\b',
+            r'\bsaturday\b',
+            r'\bsunday\b',
+            r'\bthis week\b',
+            r'\bend of day\b',
+            r'\beod\b',
+            r'\basap\b',
+            r'\bsoon\b',
+        ],
+    }
+
+    def detect_follow_up_needed(
+        self,
+        days: int = 7,
+        min_stale_days: int = 3,
+        limit: int = 50
+    ) -> Dict:
+        """
+        Detect conversations that may need follow-up.
+
+        T2 Feature: Smart reminders - finds messages suggesting action needed.
+
+        Args:
+            days: Look back this many days for patterns
+            min_stale_days: Flag conversations with no reply after this many days
+            limit: Maximum items per category
+
+        Returns:
+            Dict: Follow-up needs organized by category:
+                - unanswered_questions: Questions they asked that you didn't answer
+                - pending_promises: Things you said you'd do
+                - waiting_on_them: Things you're waiting on from them
+                - stale_conversations: Important conversations gone quiet
+                - time_sensitive: Messages with time references
+
+        Example:
+            follow_ups = interface.detect_follow_up_needed()
+            for q in follow_ups['unanswered_questions']:
+                print(f"Unanswered from {q['phone']}: {q['text'][:50]}")
+        """
+        logger.info(f"Detecting follow-up needs (days: {days})")
+
+        if not self.messages_db_path.exists():
+            logger.error(f"Messages database not found: {self.messages_db_path}")
+            return {}
+
+        try:
+            conn = sqlite3.connect(f"file:{self.messages_db_path}?mode=ro", uri=True)
+            cursor = conn.cursor()
+
+            # Calculate date thresholds
+            cutoff_date = datetime.now() - timedelta(days=days)
+            stale_date = datetime.now() - timedelta(days=min_stale_days)
+            cocoa_epoch = datetime(2001, 1, 1)
+            cutoff_cocoa = int((cutoff_date - cocoa_epoch).total_seconds() * 1_000_000_000)
+            stale_cocoa = int((stale_date - cocoa_epoch).total_seconds() * 1_000_000_000)
+
+            results = {
+                "unanswered_questions": [],
+                "pending_promises": [],
+                "waiting_on_them": [],
+                "stale_conversations": [],
+                "time_sensitive": [],
+                "analysis_period_days": days
+            }
+
+            # Get recent messages with context
+            cursor.execute("""
+                SELECT
+                    m.text,
+                    m.attributedBody,
+                    m.date,
+                    m.is_from_me,
+                    h.id as phone,
+                    m.ROWID
+                FROM message m
+                JOIN handle h ON m.handle_id = h.ROWID
+                WHERE m.date >= ?
+                    AND (m.associated_message_type IS NULL OR m.associated_message_type = 0)
+                    AND m.item_type = 0
+                ORDER BY h.id, m.date DESC
+            """, (cutoff_cocoa,))
+
+            rows = cursor.fetchall()
+
+            # Group messages by phone
+            conversations = {}
+            for row in rows:
+                text, attributed_body, date_cocoa, is_from_me, phone, rowid = row
+
+                message_text = text
+                if not message_text and attributed_body:
+                    message_text = extract_text_from_blob(attributed_body)
+
+                if not message_text:
+                    continue
+
+                if date_cocoa:
+                    date = cocoa_epoch + timedelta(seconds=date_cocoa / 1_000_000_000)
+                else:
+                    date = datetime.now()
+
+                if phone not in conversations:
+                    conversations[phone] = []
+
+                conversations[phone].append({
+                    "text": message_text,
+                    "date": date,
+                    "is_from_me": bool(is_from_me),
+                    "rowid": rowid
+                })
+
+            # Analyze each conversation
+            for phone, messages in conversations.items():
+                if not messages:
+                    continue
+
+                # Messages are ordered DESC, so [0] is most recent
+                last_msg = messages[0]
+                last_from_me = last_msg["is_from_me"]
+                last_date = last_msg["date"]
+
+                # Check for stale conversations (they messaged last, we haven't replied)
+                if not last_from_me and last_date < stale_date:
+                    days_ago = (datetime.now() - last_date).days
+                    results["stale_conversations"].append({
+                        "phone": phone,
+                        "last_message": last_msg["text"][:100],
+                        "days_since_reply": days_ago,
+                        "date": last_date.isoformat()
+                    })
+
+                # Analyze individual messages
+                for msg in messages[:20]:  # Check last 20 messages per contact
+                    text_lower = msg["text"].lower()
+
+                    # Unanswered questions (from them, not replied)
+                    if not msg["is_from_me"]:
+                        for pattern in self.FOLLOW_UP_PATTERNS["question"]:
+                            if re.search(pattern, text_lower):
+                                # Check if we replied after this
+                                has_reply = any(
+                                    m["is_from_me"] and m["date"] > msg["date"]
+                                    for m in messages
+                                )
+                                if not has_reply:
+                                    if len(results["unanswered_questions"]) < limit:
+                                        results["unanswered_questions"].append({
+                                            "phone": phone,
+                                            "text": msg["text"][:200],
+                                            "date": msg["date"].isoformat(),
+                                            "days_ago": (datetime.now() - msg["date"]).days
+                                        })
+                                break
+
+                    # Promises we made
+                    if msg["is_from_me"]:
+                        for pattern in self.FOLLOW_UP_PATTERNS["promise"]:
+                            if re.search(pattern, text_lower):
+                                if len(results["pending_promises"]) < limit:
+                                    results["pending_promises"].append({
+                                        "phone": phone,
+                                        "text": msg["text"][:200],
+                                        "date": msg["date"].isoformat(),
+                                        "days_ago": (datetime.now() - msg["date"]).days
+                                    })
+                                break
+
+                    # Things we're waiting on
+                    if msg["is_from_me"]:
+                        for pattern in self.FOLLOW_UP_PATTERNS["waiting"]:
+                            if re.search(pattern, text_lower):
+                                # Check if they replied
+                                has_reply = any(
+                                    not m["is_from_me"] and m["date"] > msg["date"]
+                                    for m in messages
+                                )
+                                if not has_reply:
+                                    if len(results["waiting_on_them"]) < limit:
+                                        results["waiting_on_them"].append({
+                                            "phone": phone,
+                                            "text": msg["text"][:200],
+                                            "date": msg["date"].isoformat(),
+                                            "days_waiting": (datetime.now() - msg["date"]).days
+                                        })
+                                break
+
+                    # Time-sensitive messages
+                    for pattern in self.FOLLOW_UP_PATTERNS["time_reference"]:
+                        if re.search(pattern, text_lower):
+                            if len(results["time_sensitive"]) < limit:
+                                results["time_sensitive"].append({
+                                    "phone": phone,
+                                    "text": msg["text"][:200],
+                                    "date": msg["date"].isoformat(),
+                                    "is_from_me": msg["is_from_me"],
+                                    "days_ago": (datetime.now() - msg["date"]).days
+                                })
+                            break
+
+            conn.close()
+
+            # Add summary counts
+            results["summary"] = {
+                "unanswered_questions": len(results["unanswered_questions"]),
+                "pending_promises": len(results["pending_promises"]),
+                "waiting_on_them": len(results["waiting_on_them"]),
+                "stale_conversations": len(results["stale_conversations"]),
+                "time_sensitive": len(results["time_sensitive"]),
+                "total_action_items": sum([
+                    len(results["unanswered_questions"]),
+                    len(results["pending_promises"]),
+                    len(results["waiting_on_them"]),
+                    len(results["stale_conversations"]),
+                ])
+            }
+
+            logger.info(f"Found {results['summary']['total_action_items']} follow-up items")
+            return results
+
+        except sqlite3.Error as e:
+            logger.error(f"Database error: {e}")
+            return {"error": str(e)}
+        except Exception as e:
+            logger.error(f"Error detecting follow-ups: {e}")
+            return {"error": str(e)}

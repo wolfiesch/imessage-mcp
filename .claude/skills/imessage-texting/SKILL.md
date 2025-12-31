@@ -1,7 +1,7 @@
 ---
 name: imessage-texting
-description: Send and read iMessages through Claude. Use when the user wants to text someone, check messages, search conversations, view group chats, or analyze messaging patterns on macOS.
-version: 1.2.0
+description: Send and read iMessages through Claude. Use when the user wants to text someone, check messages, search conversations, view group chats, analyze messaging patterns, get conversation summaries, or find follow-up reminders on macOS.
+version: 1.3.0
 ---
 
 # iMessage Texting Skill
@@ -45,6 +45,13 @@ Send and read iMessages using the `imessage-mcp` MCP server.
 | `extract_links` | Get URLs shared in conversations |
 | `get_voice_messages` | Get voice/audio messages with file paths |
 | `get_scheduled_messages` | View queued/scheduled messages (read-only) |
+
+### T2 Features (AI-Powered)
+
+| Tool | Description |
+|------|-------------|
+| `get_conversation_for_summary` | Get formatted conversation for AI summarization |
+| `detect_follow_up_needed` | Smart reminders - find messages needing action |
 
 ## Usage Examples
 
@@ -179,6 +186,34 @@ Arguments: { "days": 7, "limit": 50 }
 ```
 Tool: get_message_thread
 Arguments: { "message_guid": "p:0/...", "limit": 20 }
+```
+
+### AI Summarization & Smart Reminders (T2)
+
+**Get conversation ready for summary:**
+```
+Tool: get_conversation_for_summary
+Arguments: { "contact_name": "John", "days": 7 }
+```
+Returns formatted dialogue, stats, and topics. Claude can then summarize the conversation_text field.
+
+**Get full conversation history for summary:**
+```
+Tool: get_conversation_for_summary
+Arguments: { "contact_name": "Sarah", "limit": 500 }
+```
+
+**Detect follow-ups needed:**
+```
+Tool: detect_follow_up_needed
+Arguments: { "days": 7 }
+```
+Finds: unanswered questions, promises you made, things you're waiting on, stale conversations.
+
+**Check for urgent follow-ups (shorter window):**
+```
+Tool: detect_follow_up_needed
+Arguments: { "days": 3, "min_stale_days": 1 }
 ```
 
 ## Contact Lookup

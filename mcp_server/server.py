@@ -680,6 +680,63 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {},
                 "required": []
             }
+        ),
+        # ===== T2 FEATURES =====
+        types.Tool(
+            name="get_conversation_for_summary",
+            description=(
+                "Get conversation data formatted for AI summarization. "
+                "Returns formatted dialogue, key stats, detected topics, and metadata. "
+                "Pass the conversation_text to Claude to generate a summary. Sprint 4 T2 feature."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "contact_name": {
+                        "type": "string",
+                        "description": "Name of the contact whose conversation to summarize"
+                    },
+                    "days": {
+                        "type": "number",
+                        "description": "Optional: Limit to last N days of conversation"
+                    },
+                    "limit": {
+                        "type": "number",
+                        "description": "Maximum messages to include (default: 200)",
+                        "default": 200
+                    }
+                },
+                "required": ["contact_name"]
+            }
+        ),
+        types.Tool(
+            name="detect_follow_up_needed",
+            description=(
+                "Smart reminders - detect conversations needing follow-up. "
+                "Finds: unanswered questions, pending promises you made, things you're waiting on, "
+                "stale conversations, and time-sensitive messages. Sprint 4 T2 feature."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "number",
+                        "description": "Look back this many days (default: 7)",
+                        "default": 7
+                    },
+                    "min_stale_days": {
+                        "type": "number",
+                        "description": "Flag conversations stale after this many days (default: 3)",
+                        "default": 3
+                    },
+                    "limit": {
+                        "type": "number",
+                        "description": "Maximum items per category (default: 50)",
+                        "default": 50
+                    }
+                },
+                "required": []
+            }
         )
     ]
 
@@ -747,6 +804,11 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             return await handle_get_voice_messages(arguments)
         elif name == "get_scheduled_messages":
             return await handle_get_scheduled_messages(arguments)
+        # T2 features
+        elif name == "get_conversation_for_summary":
+            return await handle_get_conversation_for_summary(arguments)
+        elif name == "detect_follow_up_needed":
+            return await handle_detect_follow_up_needed(arguments)
         else:
             raise ValueError(f"Unknown tool: {name}")
 
@@ -2491,6 +2553,159 @@ async def handle_get_scheduled_messages(arguments: dict) -> list[types.TextConte
         response_lines.append(f"   Status: {state}")
         response_lines.append(f"   \"{text}\"")
         response_lines.append("")
+
+    return [types.TextContent(type="text", text="\n".join(response_lines))]
+
+
+# ===== T2 FEATURE HANDLERS =====
+
+
+async def handle_get_conversation_for_summary(arguments: dict) -> list[types.TextContent]:
+    """
+    Handle get_conversation_for_summary tool call (T2 Feature).
+
+    Returns conversation data formatted for AI summarization.
+    """
+    contact_name = arguments.get("contact_name")
+    days = arguments.get("days")
+    limit = arguments.get("limit", 200)
+
+    if not contact_name:
+        return [types.TextContent(type="text", text="Error: contact_name is required")]
+
+    # Look up contact
+    contact = contacts.find_contact(contact_name)
+    if not contact:
+        return [
+            types.TextContent(
+                type="text",
+                text=f"Contact '{contact_name}' not found. Run 'python3 scripts/sync_contacts.py' to sync contacts."
+            )
+        ]
+
+    # Get conversation data
+    result = messages.get_conversation_for_summary(
+        phone=contact.phone,
+        days=days,
+        limit=limit
+    )
+
+    if result.get("error"):
+        return [types.TextContent(type="text", text=f"Error: {result['error']}")]
+
+    if result.get("message_count", 0) == 0:
+        return [
+            types.TextContent(
+                type="text",
+                text=f"No messages found with {contact.name} in the specified time range."
+            )
+        ]
+
+    # Format response
+    response_lines = [
+        f"📝 Conversation with {contact.name} ready for summarization:",
+        f"",
+        f"📊 Stats:",
+        f"   Messages: {result['message_count']} ({result['key_stats']['sent']} sent, {result['key_stats']['received']} received)",
+        f"   Avg length: {result['key_stats']['avg_message_length']} chars",
+        f"   Date range: {result['date_range']['start'][:10]} to {result['date_range']['end'][:10]}",
+        f"   Last interaction: {result['last_interaction'][:10]}",
+    ]
+
+    if result.get("recent_topics"):
+        response_lines.append(f"   Topics: {', '.join(result['recent_topics'][:8])}")
+
+    response_lines.extend([
+        f"",
+        f"💬 Conversation:",
+        result["conversation_text"]
+    ])
+
+    return [types.TextContent(type="text", text="\n".join(response_lines))]
+
+
+async def handle_detect_follow_up_needed(arguments: dict) -> list[types.TextContent]:
+    """
+    Handle detect_follow_up_needed tool call (T2 Feature).
+
+    Smart reminders - detects conversations needing follow-up.
+    """
+    days = arguments.get("days", 7)
+    min_stale_days = arguments.get("min_stale_days", 3)
+    limit = arguments.get("limit", 50)
+
+    result = messages.detect_follow_up_needed(
+        days=days,
+        min_stale_days=min_stale_days,
+        limit=limit
+    )
+
+    if result.get("error"):
+        return [types.TextContent(type="text", text=f"Error: {result['error']}")]
+
+    summary = result.get("summary", {})
+    total = summary.get("total_action_items", 0)
+
+    response_lines = [
+        f"🔔 Follow-up Analysis (last {days} days):",
+        f"",
+        f"📊 Summary: {total} items needing attention",
+        f"   • Unanswered questions: {summary.get('unanswered_questions', 0)}",
+        f"   • Pending promises: {summary.get('pending_promises', 0)}",
+        f"   • Waiting on them: {summary.get('waiting_on_them', 0)}",
+        f"   • Stale conversations: {summary.get('stale_conversations', 0)}",
+        f"   • Time-sensitive: {summary.get('time_sensitive', 0)}",
+        ""
+    ]
+
+    def format_phone(phone):
+        """Get contact name for phone if available."""
+        contact = contacts.get_contact_by_phone(phone)
+        return contact.name if contact else phone[:20]
+
+    # Unanswered questions
+    if result.get("unanswered_questions"):
+        response_lines.append("❓ Unanswered Questions:")
+        for item in result["unanswered_questions"][:5]:
+            response_lines.append(f"   From {format_phone(item['phone'])} ({item['days_ago']}d ago):")
+            response_lines.append(f"   \"{item['text'][:80]}...\"" if len(item['text']) > 80 else f"   \"{item['text']}\"")
+            response_lines.append("")
+
+    # Pending promises
+    if result.get("pending_promises"):
+        response_lines.append("🤝 Promises You Made:")
+        for item in result["pending_promises"][:5]:
+            response_lines.append(f"   To {format_phone(item['phone'])} ({item['days_ago']}d ago):")
+            response_lines.append(f"   \"{item['text'][:80]}...\"" if len(item['text']) > 80 else f"   \"{item['text']}\"")
+            response_lines.append("")
+
+    # Waiting on them
+    if result.get("waiting_on_them"):
+        response_lines.append("⏳ Waiting On Them:")
+        for item in result["waiting_on_them"][:5]:
+            response_lines.append(f"   From {format_phone(item['phone'])} ({item['days_waiting']}d waiting):")
+            response_lines.append(f"   \"{item['text'][:80]}...\"" if len(item['text']) > 80 else f"   \"{item['text']}\"")
+            response_lines.append("")
+
+    # Stale conversations
+    if result.get("stale_conversations"):
+        response_lines.append("💤 Stale Conversations (no reply):")
+        for item in result["stale_conversations"][:5]:
+            response_lines.append(f"   {format_phone(item['phone'])} ({item['days_since_reply']}d ago):")
+            response_lines.append(f"   \"{item['last_message'][:60]}...\"" if len(item['last_message']) > 60 else f"   \"{item['last_message']}\"")
+            response_lines.append("")
+
+    # Time-sensitive
+    if result.get("time_sensitive"):
+        response_lines.append("⏰ Time-Sensitive Messages:")
+        for item in result["time_sensitive"][:5]:
+            who = "You" if item["is_from_me"] else format_phone(item["phone"])
+            response_lines.append(f"   {who} ({item['days_ago']}d ago):")
+            response_lines.append(f"   \"{item['text'][:80]}...\"" if len(item['text']) > 80 else f"   \"{item['text']}\"")
+            response_lines.append("")
+
+    if total == 0:
+        response_lines.append("✅ All caught up! No follow-ups needed.")
 
     return [types.TextContent(type="text", text="\n".join(response_lines))]
 
