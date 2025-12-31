@@ -146,7 +146,8 @@ async def test_mcp_protocol():
             if stderr:
                 print("\nServer errors:")
                 print(stderr.decode())
-        except:
+        except (asyncio.TimeoutError, Exception) as e:
+            # Ignore errors when trying to read stderr during cleanup
             pass
 
         return False

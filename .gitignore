@@ -2,6 +2,13 @@
 config/contacts.json
 logs/
 Plans/
+data/
+
+# RAG vector store (user-specific embeddings)
+data/chroma/
+
+# Playwright cache
+.playwright-mcp/
 
 # Claude Code local settings (but keep skills/)
 .claude/settings.local.json
