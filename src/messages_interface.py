@@ -15,7 +15,7 @@ import plistlib
 import re
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -928,6 +928,974 @@ class MessagesInterface:
             logger.debug(f"Error creating snippet: {e}")
             return text[:100]
 
+    # ===== T0 FEATURES =====
 
-# Add missing import for Sprint 1 basic implementation
-from datetime import timedelta
+    # Reaction type mappings for iMessage tapbacks
+    REACTION_TYPES = {
+        2000: "love",      # ❤️
+        2001: "like",      # 👍
+        2002: "dislike",   # 👎
+        2003: "laugh",     # 😂
+        2004: "emphasis",  # ‼️
+        2005: "question",  # ❓
+        # 3000-3005 are removal of these reactions
+        3000: "remove_love",
+        3001: "remove_like",
+        3002: "remove_dislike",
+        3003: "remove_laugh",
+        3004: "remove_emphasis",
+        3005: "remove_question",
+    }
+
+    def get_attachments(
+        self,
+        phone: Optional[str] = None,
+        mime_type_filter: Optional[str] = None,
+        limit: int = 50
+    ) -> List[Dict]:
+        """
+        Get attachments from messages, optionally filtered by contact or type.
+
+        T0 Feature: Access photos, videos, files, and other attachments.
+
+        Args:
+            phone: Optional phone number to filter by contact
+            mime_type_filter: Filter by MIME type (e.g., "image/", "video/", "application/pdf")
+            limit: Maximum number of attachments to return
+
+        Returns:
+            List[Dict]: Attachment information including:
+                - attachment_id: Unique ID
+                - filename: Full path to the attachment file
+                - mime_type: MIME type (e.g., "image/jpeg")
+                - uti: Uniform Type Identifier
+                - total_bytes: File size in bytes
+                - is_outgoing: True if sent, False if received
+                - transfer_name: Display filename
+                - created_date: When attachment was created
+                - message_date: When the message was sent
+                - sender_handle: Who sent it
+                - is_sticker: Whether this is a sticker
+
+        Example:
+            # Get all image attachments
+            images = interface.get_attachments(mime_type_filter="image/")
+
+            # Get attachments from specific contact
+            files = interface.get_attachments(phone="+14155551234")
+        """
+        logger.info(f"Getting attachments (phone: {phone}, type: {mime_type_filter})")
+
+        if not self.messages_db_path.exists():
+            logger.error(f"Messages database not found: {self.messages_db_path}")
+            return []
+
+        try:
+            conn = sqlite3.connect(f"file:{self.messages_db_path}?mode=ro", uri=True)
+            cursor = conn.cursor()
+
+            # Build query with optional filters
+            query = """
+                SELECT
+                    a.ROWID as attachment_id,
+                    a.filename,
+                    a.mime_type,
+                    a.uti,
+                    a.total_bytes,
+                    a.is_outgoing,
+                    a.transfer_name,
+                    a.created_date,
+                    a.is_sticker,
+                    m.date as message_date,
+                    m.is_from_me,
+                    h.id as sender_handle
+                FROM attachment a
+                JOIN message_attachment_join maj ON a.ROWID = maj.attachment_id
+                JOIN message m ON maj.message_id = m.ROWID
+                LEFT JOIN handle h ON m.handle_id = h.ROWID
+                WHERE 1=1
+            """
+            params = []
+
+            if phone:
+                query += " AND h.id LIKE ?"
+                params.append(f"%{phone}%")
+
+            if mime_type_filter:
+                query += " AND a.mime_type LIKE ?"
+                params.append(f"{mime_type_filter}%")
+
+            query += " ORDER BY m.date DESC LIMIT ?"
+            params.append(limit)
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            attachments = []
+            for row in rows:
+                (attachment_id, filename, mime_type, uti, total_bytes, is_outgoing,
+                 transfer_name, created_date_cocoa, is_sticker, message_date_cocoa,
+                 is_from_me, sender_handle) = row
+
+                # Convert Cocoa timestamps
+                message_date = None
+                if message_date_cocoa:
+                    cocoa_epoch = datetime(2001, 1, 1)
+                    message_date = cocoa_epoch + timedelta(seconds=message_date_cocoa / 1_000_000_000)
+
+                created_date = None
+                if created_date_cocoa:
+                    cocoa_epoch = datetime(2001, 1, 1)
+                    created_date = cocoa_epoch + timedelta(seconds=created_date_cocoa / 1_000_000_000)
+
+                attachments.append({
+                    "attachment_id": attachment_id,
+                    "filename": filename,
+                    "mime_type": mime_type,
+                    "uti": uti,
+                    "total_bytes": total_bytes,
+                    "is_outgoing": bool(is_outgoing),
+                    "transfer_name": transfer_name,
+                    "created_date": created_date.isoformat() if created_date else None,
+                    "message_date": message_date.isoformat() if message_date else None,
+                    "sender_handle": sender_handle or "unknown",
+                    "is_from_me": bool(is_from_me),
+                    "is_sticker": bool(is_sticker)
+                })
+
+            conn.close()
+            logger.info(f"Found {len(attachments)} attachments")
+            return attachments
+
+        except sqlite3.Error as e:
+            logger.error(f"Database error: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Error getting attachments: {e}")
+            return []
+
+    def get_unread_messages(self, limit: int = 50) -> List[Dict]:
+        """
+        Get unread messages that are awaiting response.
+
+        T0 Feature: Surface messages that need attention.
+
+        Args:
+            limit: Maximum number of unread messages to return
+
+        Returns:
+            List[Dict]: List of unread message dicts with keys:
+                - text: Message content
+                - date: Timestamp
+                - phone: Sender's phone/handle
+                - is_group_chat: Whether from a group
+                - group_id: Group identifier if applicable
+                - days_old: How many days since the message
+
+        Example:
+            unread = interface.get_unread_messages()
+            for msg in unread:
+                print(f"From {msg['phone']}: {msg['text'][:50]}... ({msg['days_old']} days old)")
+        """
+        logger.info(f"Getting unread messages (limit: {limit})")
+
+        if not self.messages_db_path.exists():
+            logger.error(f"Messages database not found: {self.messages_db_path}")
+            return []
+
+        try:
+            conn = sqlite3.connect(f"file:{self.messages_db_path}?mode=ro", uri=True)
+            cursor = conn.cursor()
+
+            # Query for unread incoming messages
+            # is_read = 0, is_from_me = 0, is_finished = 1
+            query = """
+                SELECT
+                    m.text,
+                    m.attributedBody,
+                    m.date,
+                    h.id as sender_handle,
+                    m.cache_roomnames,
+                    c.display_name
+                FROM message m
+                LEFT JOIN handle h ON m.handle_id = h.ROWID
+                LEFT JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
+                LEFT JOIN chat c ON cmj.chat_id = c.ROWID
+                WHERE m.is_read = 0
+                    AND m.is_from_me = 0
+                    AND m.is_finished = 1
+                    AND m.is_system_message = 0
+                    AND m.item_type = 0
+                ORDER BY m.date DESC
+                LIMIT ?
+            """
+
+            cursor.execute(query, (limit,))
+            rows = cursor.fetchall()
+
+            now = datetime.now()
+            messages = []
+            for row in rows:
+                text, attributed_body, date_cocoa, sender_handle, cache_roomnames, display_name = row
+
+                # Extract message text
+                message_text = text
+                if not message_text and attributed_body:
+                    message_text = extract_text_from_blob(attributed_body)
+
+                # Convert timestamp
+                if date_cocoa:
+                    cocoa_epoch = datetime(2001, 1, 1)
+                    date = cocoa_epoch + timedelta(seconds=date_cocoa / 1_000_000_000)
+                    days_old = (now - date).days
+                else:
+                    date = None
+                    days_old = 0
+
+                # Check if group chat
+                is_group_chat = is_group_chat_identifier(cache_roomnames)
+
+                messages.append({
+                    "text": message_text or "[message content not available]",
+                    "date": date.isoformat() if date else None,
+                    "phone": sender_handle or "unknown",
+                    "is_group_chat": is_group_chat,
+                    "group_id": cache_roomnames if is_group_chat else None,
+                    "group_name": display_name if is_group_chat else None,
+                    "days_old": days_old
+                })
+
+            conn.close()
+            logger.info(f"Found {len(messages)} unread messages")
+            return messages
+
+        except sqlite3.Error as e:
+            logger.error(f"Database error: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Error getting unread messages: {e}")
+            return []
+
+    def get_reactions(
+        self,
+        phone: Optional[str] = None,
+        limit: int = 100
+    ) -> List[Dict]:
+        """
+        Get reactions/tapbacks from messages.
+
+        T0 Feature: See who reacted to what messages with which emoji.
+
+        Args:
+            phone: Optional filter by contact
+            limit: Maximum number of reactions to return
+
+        Returns:
+            List[Dict]: Reaction information including:
+                - reaction_type: Type of reaction (love, like, dislike, laugh, emphasis, question)
+                - reaction_emoji: Associated emoji if custom
+                - reactor_handle: Who added the reaction
+                - original_message_guid: GUID of the message reacted to
+                - original_message_preview: Preview of the original message
+                - date: When the reaction was added
+                - is_removal: Whether this removes a prior reaction
+
+        Example:
+            reactions = interface.get_reactions()
+            for r in reactions:
+                print(f"{r['reactor_handle']} {r['reaction_type']}d: {r['original_message_preview']}")
+        """
+        logger.info(f"Getting reactions (phone: {phone})")
+
+        if not self.messages_db_path.exists():
+            logger.error(f"Messages database not found: {self.messages_db_path}")
+            return []
+
+        try:
+            conn = sqlite3.connect(f"file:{self.messages_db_path}?mode=ro", uri=True)
+            cursor = conn.cursor()
+
+            # Build query for reaction messages
+            # Reactions have associated_message_type in 2000-2005 (add) or 3000-3005 (remove)
+            query = """
+                SELECT
+                    r.associated_message_type,
+                    r.associated_message_guid,
+                    r.associated_message_emoji,
+                    r.date,
+                    r.is_from_me,
+                    h.id as reactor_handle,
+                    orig.text as original_text,
+                    orig.attributedBody as original_body
+                FROM message r
+                LEFT JOIN handle h ON r.handle_id = h.ROWID
+                LEFT JOIN message orig ON r.associated_message_guid = orig.guid
+                WHERE r.associated_message_type BETWEEN 2000 AND 3005
+            """
+            params = []
+
+            if phone:
+                query += " AND h.id LIKE ?"
+                params.append(f"%{phone}%")
+
+            query += " ORDER BY r.date DESC LIMIT ?"
+            params.append(limit)
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            reactions = []
+            for row in rows:
+                (reaction_code, orig_guid, custom_emoji, date_cocoa, is_from_me,
+                 reactor_handle, orig_text, orig_body) = row
+
+                # Get reaction type name
+                reaction_type = self.REACTION_TYPES.get(reaction_code, f"unknown_{reaction_code}")
+                is_removal = reaction_code >= 3000
+
+                # Get original message preview
+                orig_preview = orig_text
+                if not orig_preview and orig_body:
+                    orig_preview = extract_text_from_blob(orig_body)
+                if orig_preview and len(orig_preview) > 100:
+                    orig_preview = orig_preview[:100] + "..."
+
+                # Convert timestamp
+                if date_cocoa:
+                    cocoa_epoch = datetime(2001, 1, 1)
+                    date = cocoa_epoch + timedelta(seconds=date_cocoa / 1_000_000_000)
+                else:
+                    date = None
+
+                reactions.append({
+                    "reaction_type": reaction_type.replace("remove_", "") if is_removal else reaction_type,
+                    "reaction_emoji": custom_emoji,
+                    "reactor_handle": reactor_handle or ("me" if is_from_me else "unknown"),
+                    "is_from_me": bool(is_from_me),
+                    "original_message_guid": orig_guid,
+                    "original_message_preview": orig_preview or "[message not found]",
+                    "date": date.isoformat() if date else None,
+                    "is_removal": is_removal
+                })
+
+            conn.close()
+            logger.info(f"Found {len(reactions)} reactions")
+            return reactions
+
+        except sqlite3.Error as e:
+            logger.error(f"Database error: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Error getting reactions: {e}")
+            return []
+
+    def get_conversation_analytics(
+        self,
+        phone: Optional[str] = None,
+        days: int = 30
+    ) -> Dict:
+        """
+        Get analytics about message patterns and frequency.
+
+        T0 Feature: Understand communication patterns.
+
+        Args:
+            phone: Optional filter by specific contact (None = all contacts)
+            days: Number of days to analyze
+
+        Returns:
+            Dict: Analytics including:
+                - total_messages: Total message count
+                - sent_count: Messages you sent
+                - received_count: Messages received
+                - avg_daily_messages: Average messages per day
+                - busiest_hour: Hour with most messages (0-23)
+                - busiest_day: Day of week with most messages
+                - top_contacts: Top 10 contacts by message volume
+                - response_stats: Average response time stats
+                - attachment_count: Number of attachments
+                - reaction_count: Number of reactions sent/received
+
+        Example:
+            analytics = interface.get_conversation_analytics(days=30)
+            print(f"You exchanged {analytics['total_messages']} messages in the last 30 days")
+        """
+        logger.info(f"Getting conversation analytics (phone: {phone}, days: {days})")
+
+        if not self.messages_db_path.exists():
+            logger.error(f"Messages database not found: {self.messages_db_path}")
+            return {}
+
+        try:
+            conn = sqlite3.connect(f"file:{self.messages_db_path}?mode=ro", uri=True)
+            cursor = conn.cursor()
+
+            # Calculate date threshold
+            cutoff_date = datetime.now() - timedelta(days=days)
+            cocoa_epoch = datetime(2001, 1, 1)
+            cutoff_cocoa = int((cutoff_date - cocoa_epoch).total_seconds() * 1_000_000_000)
+
+            base_filter = "WHERE m.date >= ?"
+            params = [cutoff_cocoa]
+
+            if phone:
+                base_filter += " AND h.id LIKE ?"
+                params.append(f"%{phone}%")
+
+            # Get total counts
+            cursor.execute(f"""
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN m.is_from_me = 1 THEN 1 ELSE 0 END) as sent,
+                    SUM(CASE WHEN m.is_from_me = 0 THEN 1 ELSE 0 END) as received
+                FROM message m
+                LEFT JOIN handle h ON m.handle_id = h.ROWID
+                {base_filter}
+                AND m.associated_message_type IS NULL OR m.associated_message_type = 0
+            """, params)
+            row = cursor.fetchone()
+            total, sent, received = row if row else (0, 0, 0)
+
+            # Get messages by hour (for busiest hour)
+            cursor.execute(f"""
+                SELECT
+                    CAST((m.date / 1000000000 / 3600) % 24 AS INTEGER) as hour,
+                    COUNT(*) as count
+                FROM message m
+                LEFT JOIN handle h ON m.handle_id = h.ROWID
+                {base_filter}
+                GROUP BY hour
+                ORDER BY count DESC
+                LIMIT 1
+            """, params)
+            hour_row = cursor.fetchone()
+            busiest_hour = hour_row[0] if hour_row else None
+
+            # Get messages by day of week
+            cursor.execute(f"""
+                SELECT
+                    CAST((m.date / 1000000000 / 86400 + 1) % 7 AS INTEGER) as dow,
+                    COUNT(*) as count
+                FROM message m
+                LEFT JOIN handle h ON m.handle_id = h.ROWID
+                {base_filter}
+                GROUP BY dow
+                ORDER BY count DESC
+                LIMIT 1
+            """, params)
+            dow_row = cursor.fetchone()
+            days_of_week = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+            busiest_day = days_of_week[dow_row[0]] if dow_row and dow_row[0] is not None else None
+
+            # Get top contacts (only if not filtering by phone)
+            top_contacts = []
+            if not phone:
+                cursor.execute(f"""
+                    SELECT
+                        h.id,
+                        COUNT(*) as msg_count
+                    FROM message m
+                    JOIN handle h ON m.handle_id = h.ROWID
+                    WHERE m.date >= ?
+                    AND (m.associated_message_type IS NULL OR m.associated_message_type = 0)
+                    GROUP BY h.id
+                    ORDER BY msg_count DESC
+                    LIMIT 10
+                """, [cutoff_cocoa])
+                top_contacts = [{"phone": row[0], "message_count": row[1]} for row in cursor.fetchall()]
+
+            # Get attachment count
+            cursor.execute(f"""
+                SELECT COUNT(DISTINCT a.ROWID)
+                FROM attachment a
+                JOIN message_attachment_join maj ON a.ROWID = maj.attachment_id
+                JOIN message m ON maj.message_id = m.ROWID
+                LEFT JOIN handle h ON m.handle_id = h.ROWID
+                {base_filter}
+            """, params)
+            attachment_count = cursor.fetchone()[0] or 0
+
+            # Get reaction count
+            cursor.execute(f"""
+                SELECT COUNT(*)
+                FROM message m
+                LEFT JOIN handle h ON m.handle_id = h.ROWID
+                {base_filter}
+                AND m.associated_message_type BETWEEN 2000 AND 3005
+            """, params)
+            reaction_count = cursor.fetchone()[0] or 0
+
+            conn.close()
+
+            analytics = {
+                "total_messages": total or 0,
+                "sent_count": sent or 0,
+                "received_count": received or 0,
+                "avg_daily_messages": round((total or 0) / max(days, 1), 1),
+                "busiest_hour": busiest_hour,
+                "busiest_day": busiest_day,
+                "top_contacts": top_contacts,
+                "attachment_count": attachment_count,
+                "reaction_count": reaction_count,
+                "analysis_period_days": days
+            }
+
+            logger.info(f"Generated analytics: {total} messages over {days} days")
+            return analytics
+
+        except sqlite3.Error as e:
+            logger.error(f"Database error: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"Error getting analytics: {e}")
+            return {}
+
+    # ===== T1 FEATURES =====
+
+    def get_message_thread(
+        self,
+        message_guid: Optional[str] = None,
+        thread_originator_guid: Optional[str] = None,
+        limit: int = 50
+    ) -> List[Dict]:
+        """
+        Get messages in a reply thread.
+
+        T1 Feature: Follow reply chains and inline replies.
+
+        Args:
+            message_guid: GUID of any message in the thread
+            thread_originator_guid: GUID of the thread starter (if known)
+            limit: Maximum messages to return
+
+        Returns:
+            List[Dict]: Messages in the thread, chronologically ordered:
+                - text: Message content
+                - date: Timestamp
+                - is_from_me: Boolean
+                - sender_handle: Who sent it
+                - is_thread_originator: Whether this started the thread
+                - reply_to_guid: What message this replies to
+
+        Example:
+            thread = interface.get_message_thread(message_guid="...")
+            for msg in thread:
+                prefix = "📌 " if msg['is_thread_originator'] else "  └ "
+                print(f"{prefix}{msg['sender_handle']}: {msg['text'][:50]}")
+        """
+        logger.info(f"Getting message thread (guid: {message_guid})")
+
+        if not message_guid and not thread_originator_guid:
+            logger.error("Either message_guid or thread_originator_guid required")
+            return []
+
+        if not self.messages_db_path.exists():
+            logger.error(f"Messages database not found: {self.messages_db_path}")
+            return []
+
+        try:
+            conn = sqlite3.connect(f"file:{self.messages_db_path}?mode=ro", uri=True)
+            cursor = conn.cursor()
+
+            # If we have message_guid but not thread_originator, find the originator
+            if message_guid and not thread_originator_guid:
+                cursor.execute("""
+                    SELECT thread_originator_guid, guid
+                    FROM message
+                    WHERE guid = ?
+                """, (message_guid,))
+                row = cursor.fetchone()
+                if row:
+                    thread_originator_guid = row[0] or row[1]
+
+            if not thread_originator_guid:
+                conn.close()
+                return []
+
+            # Get all messages in this thread
+            cursor.execute("""
+                SELECT
+                    m.guid,
+                    m.text,
+                    m.attributedBody,
+                    m.date,
+                    m.is_from_me,
+                    h.id as sender_handle,
+                    m.thread_originator_guid,
+                    m.reply_to_guid
+                FROM message m
+                LEFT JOIN handle h ON m.handle_id = h.ROWID
+                WHERE m.guid = ?
+                   OR m.thread_originator_guid = ?
+                ORDER BY m.date ASC
+                LIMIT ?
+            """, (thread_originator_guid, thread_originator_guid, limit))
+
+            rows = cursor.fetchall()
+
+            messages = []
+            for row in rows:
+                (guid, text, attributed_body, date_cocoa, is_from_me,
+                 sender_handle, orig_guid, reply_guid) = row
+
+                # Extract text
+                message_text = text
+                if not message_text and attributed_body:
+                    message_text = extract_text_from_blob(attributed_body)
+
+                # Convert timestamp
+                if date_cocoa:
+                    cocoa_epoch = datetime(2001, 1, 1)
+                    date = cocoa_epoch + timedelta(seconds=date_cocoa / 1_000_000_000)
+                else:
+                    date = None
+
+                messages.append({
+                    "guid": guid,
+                    "text": message_text or "[message content not available]",
+                    "date": date.isoformat() if date else None,
+                    "is_from_me": bool(is_from_me),
+                    "sender_handle": sender_handle or ("me" if is_from_me else "unknown"),
+                    "is_thread_originator": guid == thread_originator_guid,
+                    "reply_to_guid": reply_guid
+                })
+
+            conn.close()
+            logger.info(f"Found {len(messages)} messages in thread")
+            return messages
+
+        except sqlite3.Error as e:
+            logger.error(f"Database error: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Error getting thread: {e}")
+            return []
+
+    def extract_links(
+        self,
+        phone: Optional[str] = None,
+        days: Optional[int] = None,
+        limit: int = 100
+    ) -> List[Dict]:
+        """
+        Extract URLs shared in conversations.
+
+        T1 Feature: Find all links that have been shared.
+
+        Args:
+            phone: Optional filter by contact
+            days: Optional filter by recency
+            limit: Maximum links to return
+
+        Returns:
+            List[Dict]: Link information including:
+                - url: The extracted URL
+                - message_text: Context from the message
+                - date: When shared
+                - is_from_me: Whether you shared it
+                - sender_handle: Who shared it
+
+        Example:
+            links = interface.extract_links(days=7)
+            for link in links:
+                print(f"{link['sender_handle']} shared: {link['url']}")
+        """
+        logger.info(f"Extracting links (phone: {phone}, days: {days})")
+
+        if not self.messages_db_path.exists():
+            logger.error(f"Messages database not found: {self.messages_db_path}")
+            return []
+
+        try:
+            conn = sqlite3.connect(f"file:{self.messages_db_path}?mode=ro", uri=True)
+            cursor = conn.cursor()
+
+            # Build query
+            query = """
+                SELECT
+                    m.text,
+                    m.attributedBody,
+                    m.date,
+                    m.is_from_me,
+                    h.id as sender_handle
+                FROM message m
+                LEFT JOIN handle h ON m.handle_id = h.ROWID
+                WHERE (m.text LIKE '%http%' OR m.was_data_detected = 1)
+            """
+            params = []
+
+            if phone:
+                query += " AND h.id LIKE ?"
+                params.append(f"%{phone}%")
+
+            if days:
+                cutoff_date = datetime.now() - timedelta(days=days)
+                cocoa_epoch = datetime(2001, 1, 1)
+                cutoff_cocoa = int((cutoff_date - cocoa_epoch).total_seconds() * 1_000_000_000)
+                query += " AND m.date >= ?"
+                params.append(cutoff_cocoa)
+
+            query += " ORDER BY m.date DESC LIMIT ?"
+            params.append(limit * 2)  # Fetch more since some may not have URLs
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            # URL regex pattern
+            url_pattern = re.compile(
+                r'https?://[^\s<>"{}|\\^`\[\]]+'
+            )
+
+            links = []
+            for row in rows:
+                text, attributed_body, date_cocoa, is_from_me, sender_handle = row
+
+                # Extract text
+                message_text = text
+                if not message_text and attributed_body:
+                    message_text = extract_text_from_blob(attributed_body)
+
+                if not message_text:
+                    continue
+
+                # Find URLs in text
+                urls = url_pattern.findall(message_text)
+                if not urls:
+                    continue
+
+                # Convert timestamp
+                if date_cocoa:
+                    cocoa_epoch = datetime(2001, 1, 1)
+                    date = cocoa_epoch + timedelta(seconds=date_cocoa / 1_000_000_000)
+                else:
+                    date = None
+
+                for url in urls:
+                    # Clean URL (remove trailing punctuation)
+                    url = url.rstrip('.,;:!?)')
+
+                    links.append({
+                        "url": url,
+                        "message_text": message_text[:200] + "..." if len(message_text) > 200 else message_text,
+                        "date": date.isoformat() if date else None,
+                        "is_from_me": bool(is_from_me),
+                        "sender_handle": sender_handle or ("me" if is_from_me else "unknown")
+                    })
+
+                    if len(links) >= limit:
+                        break
+
+                if len(links) >= limit:
+                    break
+
+            conn.close()
+            logger.info(f"Found {len(links)} links")
+            return links
+
+        except sqlite3.Error as e:
+            logger.error(f"Database error: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Error extracting links: {e}")
+            return []
+
+    def get_voice_messages(
+        self,
+        phone: Optional[str] = None,
+        limit: int = 50
+    ) -> List[Dict]:
+        """
+        Get voice/audio messages with file paths for transcription.
+
+        T1 Feature: Access voice messages for SuperWhisper transcription.
+
+        Args:
+            phone: Optional filter by contact
+            limit: Maximum messages to return
+
+        Returns:
+            List[Dict]: Voice message information including:
+                - attachment_path: Path to the audio file
+                - mime_type: Audio format
+                - duration_seconds: Length if available
+                - date: When sent
+                - is_from_me: Whether you sent it
+                - sender_handle: Who sent it
+                - is_played: Whether it's been played
+
+        Example:
+            voice_msgs = interface.get_voice_messages()
+            for msg in voice_msgs:
+                # Could pass msg['attachment_path'] to SuperWhisper
+                print(f"Voice from {msg['sender_handle']}: {msg['attachment_path']}")
+        """
+        logger.info(f"Getting voice messages (phone: {phone})")
+
+        if not self.messages_db_path.exists():
+            logger.error(f"Messages database not found: {self.messages_db_path}")
+            return []
+
+        try:
+            conn = sqlite3.connect(f"file:{self.messages_db_path}?mode=ro", uri=True)
+            cursor = conn.cursor()
+
+            # Query for audio messages
+            query = """
+                SELECT
+                    a.filename,
+                    a.mime_type,
+                    a.total_bytes,
+                    m.date,
+                    m.is_from_me,
+                    m.is_played,
+                    h.id as sender_handle
+                FROM message m
+                JOIN message_attachment_join maj ON m.ROWID = maj.message_id
+                JOIN attachment a ON maj.attachment_id = a.ROWID
+                LEFT JOIN handle h ON m.handle_id = h.ROWID
+                WHERE (m.is_audio_message = 1
+                    OR a.mime_type LIKE 'audio/%'
+                    OR a.uti LIKE '%audio%')
+            """
+            params = []
+
+            if phone:
+                query += " AND h.id LIKE ?"
+                params.append(f"%{phone}%")
+
+            query += " ORDER BY m.date DESC LIMIT ?"
+            params.append(limit)
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            voice_messages = []
+            for row in rows:
+                (filename, mime_type, total_bytes, date_cocoa,
+                 is_from_me, is_played, sender_handle) = row
+
+                # Convert timestamp
+                if date_cocoa:
+                    cocoa_epoch = datetime(2001, 1, 1)
+                    date = cocoa_epoch + timedelta(seconds=date_cocoa / 1_000_000_000)
+                else:
+                    date = None
+
+                voice_messages.append({
+                    "attachment_path": filename,
+                    "mime_type": mime_type,
+                    "size_bytes": total_bytes,
+                    "date": date.isoformat() if date else None,
+                    "is_from_me": bool(is_from_me),
+                    "is_played": bool(is_played),
+                    "sender_handle": sender_handle or ("me" if is_from_me else "unknown")
+                })
+
+            conn.close()
+            logger.info(f"Found {len(voice_messages)} voice messages")
+            return voice_messages
+
+        except sqlite3.Error as e:
+            logger.error(f"Database error: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Error getting voice messages: {e}")
+            return []
+
+    def get_scheduled_messages(self) -> List[Dict]:
+        """
+        Get scheduled messages that are pending send.
+
+        T1 Feature: View queued/scheduled messages (read-only).
+
+        Note: This is read-only - scheduled messages are created through
+        the Messages app UI, not programmatically.
+
+        Returns:
+            List[Dict]: Scheduled message information including:
+                - text: Message content
+                - scheduled_date: When it will be sent
+                - recipient_handle: Who it's being sent to
+                - schedule_state: Current state (pending, etc.)
+
+        Example:
+            scheduled = interface.get_scheduled_messages()
+            for msg in scheduled:
+                print(f"Scheduled for {msg['scheduled_date']}: {msg['text'][:50]}")
+        """
+        logger.info("Getting scheduled messages")
+
+        if not self.messages_db_path.exists():
+            logger.error(f"Messages database not found: {self.messages_db_path}")
+            return []
+
+        try:
+            conn = sqlite3.connect(f"file:{self.messages_db_path}?mode=ro", uri=True)
+            cursor = conn.cursor()
+
+            # Query for scheduled messages (schedule_type = 2)
+            cursor.execute("""
+                SELECT
+                    m.text,
+                    m.attributedBody,
+                    m.date,
+                    m.schedule_state,
+                    h.id as recipient_handle
+                FROM message m
+                LEFT JOIN handle h ON m.handle_id = h.ROWID
+                WHERE m.schedule_type = 2
+                ORDER BY m.date ASC
+            """)
+
+            rows = cursor.fetchall()
+
+            scheduled = []
+            for row in rows:
+                text, attributed_body, date_cocoa, schedule_state, recipient = row
+
+                # Extract text
+                message_text = text
+                if not message_text and attributed_body:
+                    message_text = extract_text_from_blob(attributed_body)
+
+                # Convert timestamp
+                if date_cocoa:
+                    cocoa_epoch = datetime(2001, 1, 1)
+                    date = cocoa_epoch + timedelta(seconds=date_cocoa / 1_000_000_000)
+                else:
+                    date = None
+
+                scheduled.append({
+                    "text": message_text or "[message content not available]",
+                    "scheduled_date": date.isoformat() if date else None,
+                    "recipient_handle": recipient or "unknown",
+                    "schedule_state": schedule_state
+                })
+
+            conn.close()
+            logger.info(f"Found {len(scheduled)} scheduled messages")
+            return scheduled
+
+        except sqlite3.Error as e:
+            logger.error(f"Database error: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Error getting scheduled messages: {e}")
+            return []
+
+    def get_messages_by_phone(self, phone: str, limit: int = 20) -> List[Dict]:
+        """
+        Get messages by phone number (without needing contact to be configured).
+
+        Sprint 2.5: Enhanced access for unknown numbers.
+
+        Args:
+            phone: Phone number or iMessage handle
+            limit: Number of recent messages to retrieve
+
+        Returns:
+            List[Dict]: Messages with that phone number
+        """
+        # This is essentially the same as get_recent_messages but with
+        # a clearer interface for the MCP tool
+        return self.get_recent_messages(phone=phone, limit=limit)

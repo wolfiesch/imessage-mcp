@@ -500,6 +500,186 @@ async def handle_list_tools() -> list[types.Tool]:
                 },
                 "required": []
             }
+        ),
+        # ===== T0 FEATURES =====
+        types.Tool(
+            name="get_attachments",
+            description=(
+                "Get attachments (photos, videos, files) from messages. "
+                "Filter by contact or MIME type (e.g., 'image/', 'video/', 'application/pdf'). "
+                "Returns file paths, sizes, and metadata. Sprint 4 T0 feature."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "contact_name": {
+                        "type": "string",
+                        "description": "Optional: Filter attachments by contact name"
+                    },
+                    "mime_type": {
+                        "type": "string",
+                        "description": "Optional: Filter by MIME type prefix (e.g., 'image/', 'video/')"
+                    },
+                    "limit": {
+                        "type": "number",
+                        "description": "Maximum attachments to return (default: 50)",
+                        "default": 50
+                    }
+                },
+                "required": []
+            }
+        ),
+        types.Tool(
+            name="get_unread_messages",
+            description=(
+                "Get unread messages that are awaiting response. "
+                "Shows messages you haven't read yet with age information. "
+                "Useful for finding messages that need attention. Sprint 4 T0 feature."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "number",
+                        "description": "Maximum unread messages to return (default: 50)",
+                        "default": 50
+                    }
+                },
+                "required": []
+            }
+        ),
+        types.Tool(
+            name="get_reactions",
+            description=(
+                "Get reactions/tapbacks from messages. "
+                "See who reacted to which messages with love, like, laugh, etc. "
+                "Shows the original message that was reacted to. Sprint 4 T0 feature."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "contact_name": {
+                        "type": "string",
+                        "description": "Optional: Filter reactions by contact"
+                    },
+                    "limit": {
+                        "type": "number",
+                        "description": "Maximum reactions to return (default: 100)",
+                        "default": 100
+                    }
+                },
+                "required": []
+            }
+        ),
+        types.Tool(
+            name="get_conversation_analytics",
+            description=(
+                "Get analytics about messaging patterns. "
+                "Shows total messages, sent/received ratio, busiest times, top contacts, etc. "
+                "Can analyze all conversations or filter by specific contact. Sprint 4 T0 feature."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "contact_name": {
+                        "type": "string",
+                        "description": "Optional: Analyze only messages with this contact"
+                    },
+                    "days": {
+                        "type": "number",
+                        "description": "Number of days to analyze (default: 30)",
+                        "default": 30
+                    }
+                },
+                "required": []
+            }
+        ),
+        # ===== T1 FEATURES =====
+        types.Tool(
+            name="get_message_thread",
+            description=(
+                "Get messages in a reply thread. "
+                "Follow inline reply chains to see the full context. "
+                "Provide a message GUID to get all messages in that thread. Sprint 4 T1 feature."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "message_guid": {
+                        "type": "string",
+                        "description": "GUID of any message in the thread"
+                    },
+                    "limit": {
+                        "type": "number",
+                        "description": "Maximum messages to return (default: 50)",
+                        "default": 50
+                    }
+                },
+                "required": ["message_guid"]
+            }
+        ),
+        types.Tool(
+            name="extract_links",
+            description=(
+                "Extract URLs shared in conversations. "
+                "Find all links that have been shared with context about who shared them. "
+                "Filter by contact or time period. Sprint 4 T1 feature."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "contact_name": {
+                        "type": "string",
+                        "description": "Optional: Filter links by contact"
+                    },
+                    "days": {
+                        "type": "number",
+                        "description": "Optional: Only links from the last N days"
+                    },
+                    "limit": {
+                        "type": "number",
+                        "description": "Maximum links to return (default: 100)",
+                        "default": 100
+                    }
+                },
+                "required": []
+            }
+        ),
+        types.Tool(
+            name="get_voice_messages",
+            description=(
+                "Get voice/audio messages with file paths. "
+                "Useful for finding audio messages that could be transcribed. "
+                "Returns file paths that can be passed to transcription services. Sprint 4 T1 feature."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "contact_name": {
+                        "type": "string",
+                        "description": "Optional: Filter voice messages by contact"
+                    },
+                    "limit": {
+                        "type": "number",
+                        "description": "Maximum voice messages to return (default: 50)",
+                        "default": 50
+                    }
+                },
+                "required": []
+            }
+        ),
+        types.Tool(
+            name="get_scheduled_messages",
+            description=(
+                "Get scheduled messages that are pending send. "
+                "View messages queued for future delivery. Read-only. "
+                "Note: Scheduled messages are created through Messages app, not programmatically. Sprint 4 T1 feature."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
         )
     ]
 
@@ -549,6 +729,24 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             return await handle_search_knowledge(arguments)
         elif name == "knowledge_stats":
             return await handle_knowledge_stats(arguments)
+        # T0 features
+        elif name == "get_attachments":
+            return await handle_get_attachments(arguments)
+        elif name == "get_unread_messages":
+            return await handle_get_unread_messages(arguments)
+        elif name == "get_reactions":
+            return await handle_get_reactions(arguments)
+        elif name == "get_conversation_analytics":
+            return await handle_get_conversation_analytics(arguments)
+        # T1 features
+        elif name == "get_message_thread":
+            return await handle_get_message_thread(arguments)
+        elif name == "extract_links":
+            return await handle_extract_links(arguments)
+        elif name == "get_voice_messages":
+            return await handle_get_voice_messages(arguments)
+        elif name == "get_scheduled_messages":
+            return await handle_get_scheduled_messages(arguments)
         else:
             raise ValueError(f"Unknown tool: {name}")
 
@@ -1703,6 +1901,598 @@ async def handle_knowledge_stats(arguments: dict) -> list[types.TextContent]:
                 text=f"Error getting stats: {str(e)}"
             )
         ]
+
+
+# ============================================================================
+# T0 and T1 Feature Handlers
+# ============================================================================
+
+
+async def handle_get_attachments(arguments: dict) -> list[types.TextContent]:
+    """
+    Handle get_attachments tool call (T0 Feature).
+
+    Args:
+        arguments: {"contact_name": Optional[str], "mime_type": Optional[str], "limit": Optional[int]}
+
+    Returns:
+        List of attachments with file paths and metadata
+    """
+    contact_name = arguments.get("contact_name")
+    mime_type_filter = arguments.get("mime_type")
+
+    # Validate limit
+    limit_raw = arguments.get("limit", 50)
+    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_MESSAGE_LIMIT)
+    if error:
+        return [types.TextContent(type="text", text=f"Validation error: {error}")]
+    if limit is None:
+        limit = 50
+
+    # If contact_name provided, look up phone
+    phone_filter = None
+    if contact_name:
+        contact = contacts.get_contact_by_name(contact_name)
+        if not contact:
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"Contact '{contact_name}' not found"
+                )
+            ]
+        phone_filter = contact.phone
+
+    # Get attachments
+    attachment_list = messages.get_attachments(
+        phone=phone_filter,
+        mime_type_filter=mime_type_filter,
+        limit=limit
+    )
+
+    if not attachment_list:
+        filter_text = ""
+        if contact_name:
+            filter_text += f" from {contact_name}"
+        if mime_type_filter:
+            filter_text += f" of type {mime_type_filter}"
+        return [
+            types.TextContent(
+                type="text",
+                text=f"No attachments found{filter_text}."
+            )
+        ]
+
+    # Format response
+    filter_text = ""
+    if contact_name:
+        filter_text = f" from {contact_name}"
+    if mime_type_filter:
+        filter_text += f" (type: {mime_type_filter})"
+
+    response_lines = [
+        f"Attachments{filter_text} ({len(attachment_list)} found):",
+        ""
+    ]
+
+    for att in attachment_list:
+        sender = att.get("sender_handle", "unknown")
+        if att.get("is_from_me"):
+            sender = "You"
+        else:
+            contact = contacts.get_contact_by_phone(sender)
+            if contact:
+                sender = contact.name
+
+        date = att["message_date"][:10] if att["message_date"] else "Unknown"
+        size_kb = (att.get("total_bytes", 0) or 0) / 1024
+        filename = att.get("transfer_name") or Path(att.get("filename", "")).name or "unknown"
+        mime = att.get("mime_type", "unknown")
+
+        response_lines.append(f"📎 {filename}")
+        response_lines.append(f"   Type: {mime} | Size: {size_kb:.1f} KB")
+        response_lines.append(f"   From: {sender} | Date: {date}")
+        if att.get("filename"):
+            response_lines.append(f"   Path: {att['filename']}")
+        response_lines.append("")
+
+    return [types.TextContent(type="text", text="\n".join(response_lines))]
+
+
+async def handle_get_unread_messages(arguments: dict) -> list[types.TextContent]:
+    """
+    Handle get_unread_messages tool call (T0 Feature).
+
+    Args:
+        arguments: {"limit": Optional[int]}
+
+    Returns:
+        List of unread messages awaiting response
+    """
+    # Validate limit
+    limit_raw = arguments.get("limit", 50)
+    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_MESSAGE_LIMIT)
+    if error:
+        return [types.TextContent(type="text", text=f"Validation error: {error}")]
+    if limit is None:
+        limit = 50
+
+    # Get unread messages
+    unread_list = messages.get_unread_messages(limit=limit)
+
+    if not unread_list:
+        return [
+            types.TextContent(
+                type="text",
+                text="✓ No unread messages! You're all caught up."
+            )
+        ]
+
+    # Format response
+    response_lines = [
+        f"📬 Unread Messages ({len(unread_list)} awaiting response):",
+        ""
+    ]
+
+    for msg in unread_list:
+        phone = msg.get("phone", "unknown")
+        contact = contacts.get_contact_by_phone(phone)
+        sender = contact.name if contact else phone[:20]
+
+        date = msg["date"][:10] if msg["date"] else "Unknown"
+        days = msg.get("days_old", 0)
+        age_text = f"{days}d ago" if days > 0 else "today"
+
+        is_group = msg.get("is_group_chat", False)
+        group_indicator = "[GROUP] " if is_group else ""
+        group_name = msg.get("group_name", "")
+        if is_group and group_name:
+            sender = f"{sender} in {group_name}"
+
+        text = msg["text"][:80] + "..." if len(msg["text"]) > 80 else msg["text"]
+
+        response_lines.append(f"• {group_indicator}{sender} ({age_text})")
+        response_lines.append(f"  \"{text}\"")
+        response_lines.append("")
+
+    return [types.TextContent(type="text", text="\n".join(response_lines))]
+
+
+async def handle_get_reactions(arguments: dict) -> list[types.TextContent]:
+    """
+    Handle get_reactions tool call (T0 Feature).
+
+    Args:
+        arguments: {"contact_name": Optional[str], "limit": Optional[int]}
+
+    Returns:
+        List of reactions/tapbacks with context
+    """
+    contact_name = arguments.get("contact_name")
+
+    # Validate limit
+    limit_raw = arguments.get("limit", 100)
+    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_SEARCH_RESULTS)
+    if error:
+        return [types.TextContent(type="text", text=f"Validation error: {error}")]
+    if limit is None:
+        limit = 100
+
+    # If contact_name provided, look up phone
+    phone_filter = None
+    if contact_name:
+        contact = contacts.get_contact_by_name(contact_name)
+        if not contact:
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"Contact '{contact_name}' not found"
+                )
+            ]
+        phone_filter = contact.phone
+
+    # Get reactions
+    reaction_list = messages.get_reactions(phone=phone_filter, limit=limit)
+
+    if not reaction_list:
+        filter_text = f" with {contact_name}" if contact_name else ""
+        return [
+            types.TextContent(
+                type="text",
+                text=f"No reactions found{filter_text}."
+            )
+        ]
+
+    # Emoji mappings for reactions
+    reaction_emojis = {
+        "love": "❤️",
+        "like": "👍",
+        "dislike": "👎",
+        "laugh": "😂",
+        "emphasis": "‼️",
+        "question": "❓",
+    }
+
+    # Format response
+    filter_text = f" with {contact_name}" if contact_name else ""
+    response_lines = [
+        f"Reactions{filter_text} ({len(reaction_list)} found):",
+        ""
+    ]
+
+    for r in reaction_list:
+        reactor = r.get("reactor_handle", "unknown")
+        if r.get("is_from_me"):
+            reactor = "You"
+        else:
+            contact = contacts.get_contact_by_phone(reactor)
+            if contact:
+                reactor = contact.name
+
+        reaction_type = r.get("reaction_type", "unknown")
+        emoji = reaction_emojis.get(reaction_type, "🔹")
+        removal = " (removed)" if r.get("is_removal") else ""
+
+        date = r["date"][:10] if r["date"] else "Unknown"
+        preview = r.get("original_message_preview", "[message]")[:50]
+
+        response_lines.append(f"{emoji} {reactor} {reaction_type}d{removal}")
+        response_lines.append(f"   \"{preview}...\" ({date})")
+        response_lines.append("")
+
+    return [types.TextContent(type="text", text="\n".join(response_lines))]
+
+
+async def handle_get_conversation_analytics(arguments: dict) -> list[types.TextContent]:
+    """
+    Handle get_conversation_analytics tool call (T0 Feature).
+
+    Args:
+        arguments: {"contact_name": Optional[str], "days": Optional[int]}
+
+    Returns:
+        Analytics about messaging patterns
+    """
+    contact_name = arguments.get("contact_name")
+
+    # Validate days
+    days_raw = arguments.get("days", 30)
+    days, error = validate_positive_int(days_raw, "days", min_val=1, max_val=365)
+    if error:
+        return [types.TextContent(type="text", text=f"Validation error: {error}")]
+    if days is None:
+        days = 30
+
+    # If contact_name provided, look up phone
+    phone_filter = None
+    if contact_name:
+        contact = contacts.get_contact_by_name(contact_name)
+        if not contact:
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"Contact '{contact_name}' not found"
+                )
+            ]
+        phone_filter = contact.phone
+
+    # Get analytics
+    analytics = messages.get_conversation_analytics(phone=phone_filter, days=days)
+
+    if not analytics or analytics.get("total_messages", 0) == 0:
+        filter_text = f" with {contact_name}" if contact_name else ""
+        return [
+            types.TextContent(
+                type="text",
+                text=f"No message data found{filter_text} in the last {days} days."
+            )
+        ]
+
+    # Format response
+    filter_text = f" with {contact_name}" if contact_name else " (All Conversations)"
+    response_lines = [
+        f"📊 Messaging Analytics{filter_text}",
+        f"Period: Last {days} days",
+        "=" * 40,
+        "",
+        f"Total Messages: {analytics.get('total_messages', 0):,}",
+        f"  • Sent: {analytics.get('sent_count', 0):,}",
+        f"  • Received: {analytics.get('received_count', 0):,}",
+        f"  • Avg/day: {analytics.get('avg_daily_messages', 0):.1f}",
+        "",
+        f"Peak Activity:",
+        f"  • Busiest hour: {analytics.get('busiest_hour', 'N/A')}:00",
+        f"  • Busiest day: {analytics.get('busiest_day', 'N/A')}",
+        "",
+        f"Content:",
+        f"  • Attachments: {analytics.get('attachment_count', 0):,}",
+        f"  • Reactions: {analytics.get('reaction_count', 0):,}",
+    ]
+
+    # Add top contacts if not filtering by contact
+    top_contacts = analytics.get("top_contacts", [])
+    if top_contacts:
+        response_lines.append("")
+        response_lines.append("Top Contacts:")
+        for i, tc in enumerate(top_contacts[:5], 1):
+            phone = tc.get("phone", "unknown")
+            contact = contacts.get_contact_by_phone(phone)
+            name = contact.name if contact else phone[:20]
+            count = tc.get("message_count", 0)
+            response_lines.append(f"  {i}. {name}: {count:,} messages")
+
+    return [types.TextContent(type="text", text="\n".join(response_lines))]
+
+
+async def handle_get_message_thread(arguments: dict) -> list[types.TextContent]:
+    """
+    Handle get_message_thread tool call (T1 Feature).
+
+    Args:
+        arguments: {"message_guid": str, "limit": Optional[int]}
+
+    Returns:
+        Messages in the reply thread
+    """
+    # Validate message_guid
+    message_guid, error = validate_non_empty_string(arguments.get("message_guid"), "message_guid")
+    if error:
+        return [types.TextContent(type="text", text=f"Validation error: {error}")]
+
+    # Validate limit
+    limit_raw = arguments.get("limit", 50)
+    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_MESSAGE_LIMIT)
+    if error:
+        return [types.TextContent(type="text", text=f"Validation error: {error}")]
+    if limit is None:
+        limit = 50
+
+    # Get thread
+    thread_messages = messages.get_message_thread(message_guid=message_guid, limit=limit)
+
+    if not thread_messages:
+        return [
+            types.TextContent(
+                type="text",
+                text=f"No thread found for message GUID: {message_guid}"
+            )
+        ]
+
+    # Format response
+    response_lines = [
+        f"Message Thread ({len(thread_messages)} messages):",
+        ""
+    ]
+
+    for msg in thread_messages:
+        sender = msg.get("sender_handle", "unknown")
+        if msg.get("is_from_me"):
+            sender = "You"
+        else:
+            contact = contacts.get_contact_by_phone(sender)
+            if contact:
+                sender = contact.name
+
+        date = msg["date"][:16] if msg["date"] else "Unknown"
+        text = msg["text"][:100] + "..." if len(msg["text"]) > 100 else msg["text"]
+
+        # Thread visualization
+        if msg.get("is_thread_originator"):
+            prefix = "📌 "
+        else:
+            prefix = "  └ "
+
+        response_lines.append(f"{prefix}[{date}] {sender}:")
+        response_lines.append(f"    {text}")
+        response_lines.append("")
+
+    return [types.TextContent(type="text", text="\n".join(response_lines))]
+
+
+async def handle_extract_links(arguments: dict) -> list[types.TextContent]:
+    """
+    Handle extract_links tool call (T1 Feature).
+
+    Args:
+        arguments: {"contact_name": Optional[str], "days": Optional[int], "limit": Optional[int]}
+
+    Returns:
+        URLs shared in conversations
+    """
+    contact_name = arguments.get("contact_name")
+    days = arguments.get("days")
+
+    # Validate limit
+    limit_raw = arguments.get("limit", 100)
+    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_SEARCH_RESULTS)
+    if error:
+        return [types.TextContent(type="text", text=f"Validation error: {error}")]
+    if limit is None:
+        limit = 100
+
+    # Validate days if provided
+    if days:
+        validated, error = validate_positive_int(days, "days", min_val=1, max_val=365)
+        if error:
+            return [types.TextContent(type="text", text=f"Validation error: {error}")]
+        days = validated
+
+    # If contact_name provided, look up phone
+    phone_filter = None
+    if contact_name:
+        contact = contacts.get_contact_by_name(contact_name)
+        if not contact:
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"Contact '{contact_name}' not found"
+                )
+            ]
+        phone_filter = contact.phone
+
+    # Get links
+    link_list = messages.extract_links(phone=phone_filter, days=days, limit=limit)
+
+    if not link_list:
+        filter_text = ""
+        if contact_name:
+            filter_text += f" from {contact_name}"
+        if days:
+            filter_text += f" in the last {days} days"
+        return [
+            types.TextContent(
+                type="text",
+                text=f"No links found{filter_text}."
+            )
+        ]
+
+    # Format response
+    filter_text = ""
+    if contact_name:
+        filter_text = f" from {contact_name}"
+    if days:
+        filter_text += f" (last {days} days)"
+
+    response_lines = [
+        f"🔗 Links{filter_text} ({len(link_list)} found):",
+        ""
+    ]
+
+    for link in link_list:
+        sender = link.get("sender_handle", "unknown")
+        if link.get("is_from_me"):
+            sender = "You"
+        else:
+            contact = contacts.get_contact_by_phone(sender)
+            if contact:
+                sender = contact.name
+
+        date = link["date"][:10] if link["date"] else "Unknown"
+        url = link.get("url", "")
+
+        response_lines.append(f"• {url}")
+        response_lines.append(f"  Shared by {sender} on {date}")
+        response_lines.append("")
+
+    return [types.TextContent(type="text", text="\n".join(response_lines))]
+
+
+async def handle_get_voice_messages(arguments: dict) -> list[types.TextContent]:
+    """
+    Handle get_voice_messages tool call (T1 Feature).
+
+    Args:
+        arguments: {"contact_name": Optional[str], "limit": Optional[int]}
+
+    Returns:
+        Voice messages with file paths
+    """
+    contact_name = arguments.get("contact_name")
+
+    # Validate limit
+    limit_raw = arguments.get("limit", 50)
+    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_MESSAGE_LIMIT)
+    if error:
+        return [types.TextContent(type="text", text=f"Validation error: {error}")]
+    if limit is None:
+        limit = 50
+
+    # If contact_name provided, look up phone
+    phone_filter = None
+    if contact_name:
+        contact = contacts.get_contact_by_name(contact_name)
+        if not contact:
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"Contact '{contact_name}' not found"
+                )
+            ]
+        phone_filter = contact.phone
+
+    # Get voice messages
+    voice_list = messages.get_voice_messages(phone=phone_filter, limit=limit)
+
+    if not voice_list:
+        filter_text = f" from {contact_name}" if contact_name else ""
+        return [
+            types.TextContent(
+                type="text",
+                text=f"No voice messages found{filter_text}."
+            )
+        ]
+
+    # Format response
+    filter_text = f" from {contact_name}" if contact_name else ""
+    response_lines = [
+        f"🎤 Voice Messages{filter_text} ({len(voice_list)} found):",
+        ""
+    ]
+
+    for vm in voice_list:
+        sender = vm.get("sender_handle", "unknown")
+        if vm.get("is_from_me"):
+            sender = "You"
+        else:
+            contact = contacts.get_contact_by_phone(sender)
+            if contact:
+                sender = contact.name
+
+        date = vm["date"][:16] if vm["date"] else "Unknown"
+        size_kb = (vm.get("size_bytes", 0) or 0) / 1024
+        played = "✓ played" if vm.get("is_played") else "unplayed"
+        path = vm.get("attachment_path", "N/A")
+
+        response_lines.append(f"🎵 From {sender} ({date})")
+        response_lines.append(f"   Size: {size_kb:.1f} KB | Status: {played}")
+        if path:
+            response_lines.append(f"   Path: {path}")
+        response_lines.append("")
+
+    response_lines.append("Tip: Voice message paths can be passed to transcription services.")
+
+    return [types.TextContent(type="text", text="\n".join(response_lines))]
+
+
+async def handle_get_scheduled_messages(arguments: dict) -> list[types.TextContent]:
+    """
+    Handle get_scheduled_messages tool call (T1 Feature).
+
+    Returns:
+        Scheduled messages pending send
+    """
+    # Get scheduled messages
+    scheduled_list = messages.get_scheduled_messages()
+
+    if not scheduled_list:
+        return [
+            types.TextContent(
+                type="text",
+                text="No scheduled messages found."
+            )
+        ]
+
+    # Format response
+    response_lines = [
+        f"📅 Scheduled Messages ({len(scheduled_list)} pending):",
+        ""
+    ]
+
+    for msg in scheduled_list:
+        recipient = msg.get("recipient_handle", "unknown")
+        contact = contacts.get_contact_by_phone(recipient)
+        recipient_name = contact.name if contact else recipient[:20]
+
+        scheduled_date = msg["scheduled_date"][:16] if msg["scheduled_date"] else "Unknown"
+        text = msg["text"][:80] + "..." if len(msg["text"]) > 80 else msg["text"]
+        state = msg.get("schedule_state", "pending")
+
+        response_lines.append(f"⏰ To {recipient_name}")
+        response_lines.append(f"   Scheduled: {scheduled_date}")
+        response_lines.append(f"   Status: {state}")
+        response_lines.append(f"   \"{text}\"")
+        response_lines.append("")
+
+    return [types.TextContent(type="text", text="\n".join(response_lines))]
 
 
 async def main():
