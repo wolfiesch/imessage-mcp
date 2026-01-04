@@ -1,0 +1,14 @@
+{
+  "name": "wolfiesch-imessage",
+  "owner": {
+    "name": "Wolfgang Schoenberger"
+  },
+  "plugins": [
+    {
+      "name": "imessage-gateway",
+      "source": ".",
+      "description": "iMessage CLI for Claude Code - no MCP overhead",
+      "version": "1.0.0"
+    }
+  ]
+}

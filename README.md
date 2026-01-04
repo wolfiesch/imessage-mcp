@@ -1,6 +1,83 @@
 # iMessage MCP Server
 
-A personalized iMessage MCP (Model Context Protocol) server that lets Claude send and read iMessages on macOS.
+![macOS](https://img.shields.io/badge/macOS-only-blue?logo=apple)
+![Python](https://img.shields.io/badge/Python-3.9+-green?logo=python)
+![License](https://img.shields.io/badge/License-MIT-yellow)
+![Claude Code](https://img.shields.io/badge/Claude%20Code-compatible-purple)
+
+A personalized iMessage integration for Claude Code on macOS. Send and read iMessages, search conversations, and manage follow-ups.
+
+## Two Ways to Use
+
+| Approach | Best For | Overhead |
+|----------|----------|----------|
+| **Gateway CLI** (New!) | Zero-latency access, privacy | None until used |
+| **MCP Server** | Full integration, always available | ~1-2s startup per session |
+
+---
+
+## 🚀 Gateway CLI (Recommended)
+
+Standalone Python CLI that queries Messages.db directly. No MCP server overhead.
+
+### Install as Claude Code Plugin
+
+```bash
+/plugin marketplace add wolfiesch/imessage-mcp
+/plugin install imessage-gateway@wolfiesch-imessage
+```
+
+### Or Clone for Standalone Use
+
+```bash
+git clone https://github.com/wolfiesch/imessage-mcp ~/.claude/skills/imessage-gateway
+cd ~/.claude/skills/imessage-gateway
+pip install -r requirements.txt
+
+# Sync contacts
+python3 scripts/sync_contacts.py
+```
+
+### Quick Commands
+
+```bash
+# Search messages with a contact
+python3 gateway/imessage_client.py search "John" --limit 20
+
+# Send a message
+python3 gateway/imessage_client.py send "John" "Running late!"
+
+# Check unread messages
+python3 gateway/imessage_client.py unread
+
+# Find messages needing follow-up
+python3 gateway/imessage_client.py followup --days 7
+
+# Conversation analytics
+python3 gateway/imessage_client.py analytics "Sarah" --days 30
+```
+
+### Architecture
+
+```
+Messages.db (SQLite)
+    ↓
+Python CLI (gateway/imessage_client.py)
+    ↓
+Bash tool call
+    ↓
+Claude Code
+```
+
+- **Contact resolution**: Fuzzy matching via `config/contacts.json`
+- **Sending**: AppleScript → Messages.app
+- **Reading**: Direct SQLite queries (no API overhead)
+
+---
+
+## 📡 MCP Server (Full Integration)
+
+For always-on access via Claude Code's MCP system.
 
 ## Features
 
