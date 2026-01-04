@@ -64,3 +64,4 @@ htmlcov/
 # Local development
 *.local.json
 .env.local
+gateway/cpp/imessage_client

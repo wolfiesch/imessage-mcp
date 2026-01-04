@@ -32,6 +32,8 @@ REPO_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 CLI_PATH = SCRIPT_DIR / "imessage_client.py"
+CPP_SRC = SCRIPT_DIR / "cpp" / "imessage_client.cpp"
+CPP_BINARY = SCRIPT_DIR / "cpp" / "imessage_client"
 
 
 @dataclass
@@ -52,6 +54,7 @@ class BenchmarkResult:
 class BenchmarkSuite:
     """Collection of benchmark results."""
     suite_name: str
+    target: str
     timestamp: str
     results: List[BenchmarkResult]
     metadata: Dict[str, Any]
@@ -85,11 +88,59 @@ def run_cli_command(cmd: List[str], timeout: int = 30) -> tuple[float, bool, str
         return elapsed, False, str(e)
 
 
+def build_cpp_cli() -> Path:
+    """Compile the C++ gateway CLI if needed."""
+    CPP_BINARY.parent.mkdir(parents=True, exist_ok=True)
+
+    includes = subprocess.check_output(["python3-config", "--includes"], text=True).strip().split()
+    ldflags = subprocess.check_output(["python3-config", "--embed", "--ldflags"], text=True).strip().split()
+
+    compile_cmd = [
+        "g++",
+        "-std=c++17",
+        str(CPP_SRC),
+        "-o",
+        str(CPP_BINARY),
+    ] + includes + ldflags
+
+    result = subprocess.run(compile_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"C++ build failed: {result.stderr}")
+    return CPP_BINARY
+
+
+def run_cpp_command(cmd: List[str], timeout: int = 30) -> tuple[float, bool, str]:
+    """Run the compiled C++ CLI and measure execution time."""
+    if not CPP_BINARY.exists():
+        build_cpp_cli()
+
+    start = time.perf_counter()
+    try:
+        result = subprocess.run(
+            [str(CPP_BINARY)] + cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(REPO_ROOT)
+        )
+        elapsed = (time.perf_counter() - start) * 1000
+        success = result.returncode == 0
+        output = result.stdout if success else result.stderr
+        return elapsed, success, output
+    except subprocess.TimeoutExpired:
+        elapsed = (time.perf_counter() - start) * 1000
+        return elapsed, False, "TIMEOUT"
+    except Exception as e:
+        elapsed = (time.perf_counter() - start) * 1000
+        return elapsed, False, str(e)
+
+
 def benchmark_command(
     name: str,
     description: str,
     cmd: List[str],
-    iterations: int = 10
+    iterations: int = 10,
+    command_runner=run_cli_command
 ) -> BenchmarkResult:
     """
     Benchmark a CLI command over multiple iterations.
@@ -109,7 +160,7 @@ def benchmark_command(
     successes = 0
 
     for i in range(iterations):
-        elapsed, success, _ = run_cli_command(cmd)
+        elapsed, success, _ = command_runner(cmd)
         timings.append(elapsed)
         if success:
             successes += 1
@@ -132,103 +183,113 @@ def benchmark_command(
     return result
 
 
-def benchmark_startup_overhead(iterations: int = 20) -> BenchmarkResult:
+def benchmark_startup_overhead(iterations: int = 20, runner=run_cli_command) -> BenchmarkResult:
     """Test CLI startup overhead with minimal command."""
     return benchmark_command(
         name="startup_overhead",
         description="CLI startup time with --help",
         cmd=["--help"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_contacts_list(iterations: int = 10) -> BenchmarkResult:
+def benchmark_contacts_list(iterations: int = 10, runner=run_cli_command) -> BenchmarkResult:
     """Test listing all contacts."""
     return benchmark_command(
         name="contacts_list",
         description="List all contacts (no JSON)",
         cmd=["contacts"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_contacts_list_json(iterations: int = 10) -> BenchmarkResult:
+def benchmark_contacts_list_json(iterations: int = 10, runner=run_cli_command) -> BenchmarkResult:
     """Test listing contacts with JSON output."""
     return benchmark_command(
         name="contacts_list_json",
         description="List all contacts with JSON serialization",
         cmd=["contacts", "--json"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_unread_messages(iterations: int = 10) -> BenchmarkResult:
+def benchmark_unread_messages(iterations: int = 10, runner=run_cli_command) -> BenchmarkResult:
     """Test fetching unread messages."""
     return benchmark_command(
         name="unread_messages",
         description="Fetch unread messages",
         cmd=["unread"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_recent_conversations(iterations: int = 10, limit: int = 10) -> BenchmarkResult:
+def benchmark_recent_conversations(iterations: int = 10, limit: int = 10, runner=run_cli_command) -> BenchmarkResult:
     """Test fetching recent conversations."""
     return benchmark_command(
         name=f"recent_conversations_{limit}",
         description=f"Fetch {limit} recent conversations",
         cmd=["recent", "--limit", str(limit)],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_search_small(iterations: int = 10) -> BenchmarkResult:
+def benchmark_search_small(iterations: int = 10, runner=run_cli_command) -> BenchmarkResult:
     """Test searching messages with small result set."""
     return benchmark_command(
         name="search_small",
         description="Search recent messages (limit 10, contact-agnostic)",
         cmd=["recent", "--limit", "10"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_search_medium(iterations: int = 10) -> BenchmarkResult:
+def benchmark_search_medium(iterations: int = 10, runner=run_cli_command) -> BenchmarkResult:
     """Test searching messages with medium result set."""
     return benchmark_command(
         name="search_medium",
         description="Search recent messages (limit 50, contact-agnostic)",
         cmd=["recent", "--limit", "50"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_search_large(iterations: int = 5) -> BenchmarkResult:
+def benchmark_search_large(iterations: int = 5, runner=run_cli_command) -> BenchmarkResult:
     """Test searching messages with large result set."""
     return benchmark_command(
         name="search_large",
         description="Search recent messages (limit 200, contact-agnostic)",
         cmd=["recent", "--limit", "200"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_analytics(iterations: int = 5) -> BenchmarkResult:
+def benchmark_analytics(iterations: int = 5, runner=run_cli_command) -> BenchmarkResult:
     """Test conversation analytics (computationally intensive)."""
     return benchmark_command(
         name="analytics_30days",
         description="Conversation analytics for 30 days",
         cmd=["analytics", "--days", "30"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_followup_detection(iterations: int = 5) -> BenchmarkResult:
+def benchmark_followup_detection(iterations: int = 5, runner=run_cli_command) -> BenchmarkResult:
     """Test follow-up detection (complex query)."""
     return benchmark_command(
         name="followup_detection",
         description="Detect follow-ups needed (7 days)",
         cmd=["followup", "--days", "7"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
@@ -237,93 +298,102 @@ def benchmark_followup_detection(iterations: int = 5) -> BenchmarkResult:
 # =============================================================================
 
 
-def benchmark_groups_list(iterations: int = 10) -> BenchmarkResult:
+def benchmark_groups_list(iterations: int = 10, runner=run_cli_command) -> BenchmarkResult:
     """Test listing group chats."""
     return benchmark_command(
         name="groups_list",
         description="List group chats",
         cmd=["groups", "--json"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_attachments(iterations: int = 10) -> BenchmarkResult:
+def benchmark_attachments(iterations: int = 10, runner=run_cli_command) -> BenchmarkResult:
     """Test getting attachments."""
     return benchmark_command(
         name="attachments",
         description="Get attachments (photos/videos/files)",
         cmd=["attachments", "--limit", "20", "--json"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_reactions(iterations: int = 10) -> BenchmarkResult:
+def benchmark_reactions(iterations: int = 10, runner=run_cli_command) -> BenchmarkResult:
     """Test getting reactions/tapbacks."""
     return benchmark_command(
         name="reactions",
         description="Get reactions (tapbacks)",
         cmd=["reactions", "--limit", "20", "--json"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_links(iterations: int = 10) -> BenchmarkResult:
+def benchmark_links(iterations: int = 10, runner=run_cli_command) -> BenchmarkResult:
     """Test extracting links from messages."""
     return benchmark_command(
         name="links",
         description="Extract shared URLs",
         cmd=["links", "--limit", "20", "--json"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_voice_messages(iterations: int = 10) -> BenchmarkResult:
+def benchmark_voice_messages(iterations: int = 10, runner=run_cli_command) -> BenchmarkResult:
     """Test getting voice messages."""
     return benchmark_command(
         name="voice_messages",
         description="Get voice messages",
         cmd=["voice", "--limit", "10", "--json"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_handles(iterations: int = 10) -> BenchmarkResult:
+def benchmark_handles(iterations: int = 10, runner=run_cli_command) -> BenchmarkResult:
     """Test listing recent handles."""
     return benchmark_command(
         name="handles_list",
         description="List recent phone/email handles",
         cmd=["handles", "--days", "7", "--json"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_unknown_senders(iterations: int = 5) -> BenchmarkResult:
+def benchmark_unknown_senders(iterations: int = 5, runner=run_cli_command) -> BenchmarkResult:
     """Test finding unknown senders (computationally intensive)."""
     return benchmark_command(
         name="unknown_senders",
         description="Find messages from non-contacts",
         cmd=["unknown", "--days", "7", "--json"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_scheduled(iterations: int = 10) -> BenchmarkResult:
+def benchmark_scheduled(iterations: int = 10, runner=run_cli_command) -> BenchmarkResult:
     """Test getting scheduled messages."""
     return benchmark_command(
         name="scheduled_messages",
         description="Get scheduled messages",
         cmd=["scheduled", "--json"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
-def benchmark_summary(iterations: int = 5) -> BenchmarkResult:
+def benchmark_summary(iterations: int = 5, runner=run_cli_command) -> BenchmarkResult:
     """Test getting conversation summary (complex)."""
     return benchmark_command(
         name="conversation_summary",
         description="Get conversation analytics (contact-agnostic, complex operation)",
         cmd=["analytics", "--days", "30", "--json"],
-        iterations=iterations
+        iterations=iterations,
+        command_runner=runner
     )
 
 
@@ -383,55 +453,55 @@ def benchmark_mcp_server_startup(iterations: int = 10) -> BenchmarkResult:
     return result
 
 
-def run_quick_benchmarks() -> List[BenchmarkResult]:
+def run_quick_benchmarks(runner=run_cli_command) -> List[BenchmarkResult]:
     """Run a quick subset of benchmarks (fast execution)."""
     print("\n=== Quick Benchmark Suite ===\n")
     return [
-        benchmark_startup_overhead(iterations=10),
-        benchmark_contacts_list(iterations=5),
-        benchmark_unread_messages(iterations=5),
-        benchmark_recent_conversations(iterations=5, limit=10),
-        benchmark_search_small(iterations=5),
+        benchmark_startup_overhead(iterations=10, runner=runner),
+        benchmark_contacts_list(iterations=5, runner=runner),
+        benchmark_unread_messages(iterations=5, runner=runner),
+        benchmark_recent_conversations(iterations=5, limit=10, runner=runner),
+        benchmark_search_small(iterations=5, runner=runner),
     ]
 
 
-def run_full_benchmarks() -> List[BenchmarkResult]:
+def run_full_benchmarks(runner=run_cli_command) -> List[BenchmarkResult]:
     """Run the full benchmark suite."""
     print("\n=== Full Benchmark Suite ===\n")
     return [
         # Core operations
-        benchmark_startup_overhead(iterations=20),
-        benchmark_contacts_list(iterations=10),
-        benchmark_contacts_list_json(iterations=10),
+        benchmark_startup_overhead(iterations=20, runner=runner),
+        benchmark_contacts_list(iterations=10, runner=runner),
+        benchmark_contacts_list_json(iterations=10, runner=runner),
 
         # Message operations
-        benchmark_unread_messages(iterations=10),
-        benchmark_recent_conversations(iterations=10, limit=10),
-        benchmark_recent_conversations(iterations=10, limit=50),
+        benchmark_unread_messages(iterations=10, runner=runner),
+        benchmark_recent_conversations(iterations=10, limit=10, runner=runner),
+        benchmark_recent_conversations(iterations=10, limit=50, runner=runner),
 
         # Search operations (varying complexity)
-        benchmark_search_small(iterations=10),
-        benchmark_search_medium(iterations=10),
-        benchmark_search_large(iterations=5),
+        benchmark_search_small(iterations=10, runner=runner),
+        benchmark_search_medium(iterations=10, runner=runner),
+        benchmark_search_large(iterations=5, runner=runner),
 
         # Complex operations
-        benchmark_analytics(iterations=5),
-        benchmark_followup_detection(iterations=5),
+        benchmark_analytics(iterations=5, runner=runner),
+        benchmark_followup_detection(iterations=5, runner=runner),
 
         # T0 Features - Core
-        benchmark_groups_list(iterations=10),
-        benchmark_attachments(iterations=10),
+        benchmark_groups_list(iterations=10, runner=runner),
+        benchmark_attachments(iterations=10, runner=runner),
 
         # T1 Features - Advanced
-        benchmark_reactions(iterations=10),
-        benchmark_links(iterations=10),
-        benchmark_voice_messages(iterations=10),
+        benchmark_reactions(iterations=10, runner=runner),
+        benchmark_links(iterations=10, runner=runner),
+        benchmark_voice_messages(iterations=10, runner=runner),
 
         # T2 Features - Discovery
-        benchmark_handles(iterations=10),
-        benchmark_unknown_senders(iterations=5),
-        benchmark_scheduled(iterations=10),
-        benchmark_summary(iterations=5),
+        benchmark_handles(iterations=10, runner=runner),
+        benchmark_unknown_senders(iterations=5, runner=runner),
+        benchmark_scheduled(iterations=10, runner=runner),
+        benchmark_summary(iterations=5, runner=runner),
     ]
 
 
@@ -494,6 +564,38 @@ def print_summary(results: List[BenchmarkResult]):
     print("=" * 80)
 
 
+def run_suite_for_target(target: str, args) -> BenchmarkSuite:
+    """Run benchmarks for the selected implementation."""
+    runner = run_cli_command if target == "python" else run_cpp_command
+
+    if target == "cpp":
+        build_cpp_cli()
+
+    if args.quick:
+        results = run_quick_benchmarks(runner=runner)
+    elif args.compare_mcp and target == "python":
+        results = run_comparison_benchmarks()
+    else:
+        if args.compare_mcp and target != "python":
+            print("⚠️ MCP server comparison is only supported for the Python gateway. Running standard benchmarks instead.\n")
+        results = run_full_benchmarks(runner=runner)
+
+    metadata = {
+        "implementation": target,
+        "cli_path": str(CLI_PATH) if target == "python" else str(CPP_BINARY),
+        "total_benchmarks": len(results),
+        "python_version": sys.version.split()[0]
+    }
+
+    return BenchmarkSuite(
+        suite_name="quick" if args.quick else "full",
+        target=target,
+        timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
+        results=results,
+        metadata=metadata
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Benchmark suite for iMessage CLI Gateway",
@@ -519,37 +621,42 @@ def main():
         "-o",
         help="Save results to file (JSON format)"
     )
+    parser.add_argument(
+        "--target",
+        choices=["python", "cpp", "both"],
+        default="python",
+        help="Which gateway implementation to benchmark (default: python)"
+    )
 
     args = parser.parse_args()
 
-    # Run benchmarks
-    if args.quick:
-        results = run_quick_benchmarks()
-    elif args.compare_mcp:
-        results = run_comparison_benchmarks()
-    else:
-        results = run_full_benchmarks()
-
-    # Create suite
-    suite = BenchmarkSuite(
-        suite_name="quick" if args.quick else "full",
-        timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
-        results=results,
-        metadata={
-            "cli_path": str(CLI_PATH),
-            "total_benchmarks": len(results),
-            "python_version": sys.version.split()[0]
-        }
-    )
+    targets = ["python", "cpp"] if args.target == "both" else [args.target]
+    suites = [run_suite_for_target(target, args) for target in targets]
 
     # Output results
     if args.json or args.output:
-        output_data = {
-            "suite_name": suite.suite_name,
-            "timestamp": suite.timestamp,
-            "metadata": suite.metadata,
-            "results": [asdict(r) for r in suite.results]
-        }
+        if len(suites) == 1:
+            suite = suites[0]
+            output_data = {
+                "suite_name": suite.suite_name,
+                "target": suite.target,
+                "timestamp": suite.timestamp,
+                "metadata": suite.metadata,
+                "results": [asdict(r) for r in suite.results]
+            }
+        else:
+            output_data = {
+                "suites": [
+                    {
+                        "suite_name": suite.suite_name,
+                        "target": suite.target,
+                        "timestamp": suite.timestamp,
+                        "metadata": suite.metadata,
+                        "results": [asdict(r) for r in suite.results]
+                    }
+                    for suite in suites
+                ]
+            }
 
         if args.output:
             with open(args.output, 'w') as f:
@@ -558,7 +665,9 @@ def main():
         else:
             print(json.dumps(output_data, indent=2))
     else:
-        print_summary(results)
+        for suite in suites:
+            print(f"\n=== {suite.target.upper()} IMPLEMENTATION ({suite.suite_name} suite) ===")
+            print_summary(suite.results)
 
     return 0
 
