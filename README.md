@@ -13,12 +13,13 @@ A personalized iMessage integration for Claude Code on macOS. Send and read iMes
 |----------|----------|----------|
 | **Gateway CLI** (New!) | Zero-latency access, privacy | None until used |
 | **MCP Server** | Full integration, always available | ~1-2s startup per session |
+| **Rust Gateway** | Native speed, single binary | Initial build |
 
 ---
 
 ## 🚀 Gateway CLI (Recommended)
 
-Standalone Python CLI that queries Messages.db directly. No MCP server overhead.
+Standalone CLI implementations that query Messages.db directly. No MCP server overhead.
 
 ### Install as Claude Code Plugin
 
@@ -38,7 +39,7 @@ pip install -r requirements.txt
 python3 scripts/sync_contacts.py
 ```
 
-### Quick Commands
+### Quick Commands (Python)
 
 ```bash
 # Search messages with a contact
@@ -55,6 +56,18 @@ python3 gateway/imessage_client.py followup --days 7
 
 # Conversation analytics
 python3 gateway/imessage_client.py analytics "Sarah" --days 30
+
+### Rust Binary (Experimental)
+
+```bash
+cargo run -p imessage-gateway -- --help
+
+# Example usage (from repo root)
+cargo run -p imessage-gateway -- search "John" --limit 20
+cargo run -p imessage-gateway -- messages "John" --limit 10
+cargo run -p imessage-gateway -- unread --limit 5
+cargo run -p imessage-gateway -- contacts
+cargo run -p imessage-gateway -- send "John" "On my way!"
 ```
 
 ### Architecture
