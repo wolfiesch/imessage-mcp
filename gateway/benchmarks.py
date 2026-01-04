@@ -22,7 +22,7 @@ import json
 import subprocess
 import statistics
 from pathlib import Path
-from typing import Dict, List, Any, Callable
+from typing import Dict, List, Any
 from dataclasses import dataclass, asdict
 import argparse
 
