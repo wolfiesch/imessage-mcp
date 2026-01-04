@@ -37,96 +37,107 @@ Standalone CLI for iMessage operations. No MCP server required - queries Message
 All commands use the gateway CLI:
 
 ```bash
-python3 gateway/imessage_client.py <command> [args]
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py <command> [args]
 ```
 
 ### Search Messages
 
 ```bash
 # All messages with John
-python3 gateway/imessage_client.py search "John"
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py search "John"
 
 # Messages containing "meeting"
-python3 gateway/imessage_client.py search "John" --query "meeting"
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py search "John" --query "meeting"
 
 # Last 50 messages
-python3 gateway/imessage_client.py search "John" --limit 50
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py search "John" --limit 50
 ```
 
 ### Get Conversation
 
 ```bash
-python3 gateway/imessage_client.py messages "John" --limit 10
-python3 gateway/imessage_client.py messages "John" --json
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py messages "John" --limit 10
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py messages "John" --json
 ```
 
 ### Check Unread
 
 ```bash
-python3 gateway/imessage_client.py unread
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py unread
 ```
 
 ### Send Message
 
 ```bash
-python3 gateway/imessage_client.py send "John" "Running late!"
-python3 gateway/imessage_client.py send "Mom" "Happy birthday!"
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py send "John" "Running late!"
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py send "Mom" "Happy birthday!"
 ```
 
 ### Find Follow-ups
 
 ```bash
-python3 gateway/imessage_client.py followup --days 7 --stale 2
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py followup --days 7 --stale 2
 ```
 
 ### Analytics
 
 ```bash
-python3 gateway/imessage_client.py analytics "Sarah" --days 30
-python3 gateway/imessage_client.py analytics --days 7  # All contacts
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py analytics "Sarah" --days 30
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py analytics --days 7  # All contacts
 ```
 
 ## Contact Resolution
 
-Contact names are fuzzy-matched from `config/contacts.json`:
+Contact names are fuzzy-matched from `${CLAUDE_PLUGIN_ROOT}/config/contacts.json`:
 
-- "John" → "John Doe" (first match)
-- "ang" → "Angus Smith" (partial match)
+- "John" -> "John Doe" (first match)
+- "ang" -> "Angus Smith" (partial match)
 - Case insensitive
 
 ## Output Formats
 
-All commands support `--json` flag for structured output:
+The following commands support `--json` for structured output: `messages`, `recent`, `unread`, `contacts`, `analytics`, `followup`.
 
 ```bash
-python3 gateway/imessage_client.py messages "John" --json | jq '.[] | .text'
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py messages "John" --json | jq '.[] | .text'
 ```
 
 ## Benefits Over MCP
 
 | Aspect | MCP Server | Gateway Script |
 |--------|------------|----------------|
-| Startup overhead | ~1-2s every session | 0 (on-demand) |
+| Startup overhead | ~763ms | ~40ms |
 | Context tokens | ~3k tokens | ~0 (Bash only) |
 | Always running | Yes | No |
 | Complexity | Higher | Simple CLI |
+
+**19x faster execution with 80% fewer tokens.**
 
 ## Requirements
 
 - macOS (Messages.app integration)
 - Python 3.9+
 - Full Disk Access permission for Terminal
-- Contacts synced to `config/contacts.json`
+- Contacts synced to `${CLAUDE_PLUGIN_ROOT}/config/contacts.json`
+
+## Setup After Installation
+
+```bash
+# Sync contacts from macOS Contacts.app
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/sync_contacts.py
+
+# Install dependencies
+pip install -r ${CLAUDE_PLUGIN_ROOT}/requirements.txt
+```
 
 ## Troubleshooting
 
 **"Contact not found"**
 - Run `contacts` command to list available names
-- Contacts loaded from `config/contacts.json`
+- Contacts loaded from `${CLAUDE_PLUGIN_ROOT}/config/contacts.json`
 
 **"Could not import modules"**
-- Ensure you're running from repo root
-- Run: `pip install -e .`
+- Ensure dependencies are installed: `pip install -r ${CLAUDE_PLUGIN_ROOT}/requirements.txt`
 
 **No messages shown**
 - Check Full Disk Access for Terminal

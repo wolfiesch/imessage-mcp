@@ -1,14 +1,24 @@
 {
   "name": "wolfiesch-imessage",
   "owner": {
-    "name": "Wolfgang Schoenberger"
+    "name": "Wolfgang Schoenberger",
+    "url": "https://github.com/wolfiesch"
   },
   "plugins": [
     {
       "name": "imessage-gateway",
       "source": ".",
-      "description": "iMessage CLI for Claude Code - no MCP overhead",
-      "version": "1.0.0"
+      "description": "iMessage CLI for Claude Code - 19x faster than MCP. Search messages, send texts, find follow-ups with zero startup overhead.",
+      "version": "1.0.0",
+      "category": "communication",
+      "tags": ["imessage", "messaging", "macos", "gateway-pattern"],
+      "readme": "./README.md",
+      "highlights": [
+        "19x faster than MCP tools (40ms vs 763ms)",
+        "80% fewer context tokens",
+        "20 commands: search, send, unread, followup, analytics, groups, and more",
+        "Zero startup overhead - only loaded when needed"
+      ]
     }
   ]
 }

@@ -10,16 +10,16 @@ Access your Messages.db without MCP server overhead. macOS only.
 
 ```bash
 # Search messages with a contact
-python3 gateway/imessage_client.py search "John" --limit 20
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py search "John" --limit 20
 
 # Send a message
-python3 gateway/imessage_client.py send "John" "Running late!"
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py send "John" "Running late!"
 
 # Check unread messages
-python3 gateway/imessage_client.py unread
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py unread
 
 # Find messages needing follow-up
-python3 gateway/imessage_client.py followup --days 7
+python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py followup --days 7
 ```
 
 ## Available Commands
@@ -34,18 +34,34 @@ python3 gateway/imessage_client.py followup --days 7
 | `followup` | Find messages needing reply |
 | `contacts` | List all contacts |
 | `analytics` | Conversation statistics |
+| `groups` | List group chats |
+| `group-messages` | Read group messages |
+| `attachments` | Get photos/videos/files |
+| `voice` | Get voice messages |
+| `links` | Extract shared URLs |
+| `reactions` | Get tapbacks/emoji reactions |
 
 ## Requirements
 
 - macOS (Messages.app integration)
 - Python 3.9+
-- Full Disk Access for Terminal (System Settings → Privacy → Full Disk Access)
-- Contacts synced to `config/contacts.json`
+- Full Disk Access for Terminal (System Settings -> Privacy -> Full Disk Access)
+- Contacts synced to `${CLAUDE_PLUGIN_ROOT}/config/contacts.json`
+
+## Setup After Installation
+
+```bash
+# Sync contacts from macOS Contacts.app
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/sync_contacts.py
+
+# Install dependencies
+pip install -r ${CLAUDE_PLUGIN_ROOT}/requirements.txt
+```
 
 ## Why Gateway Pattern?
 
-MCP servers load into every Claude Code session (~1-2s startup + context tokens).
+MCP servers load into every Claude Code session (~763ms startup + context tokens).
 
 Gateway pattern: standalone Python CLI, invoked via Bash only when needed.
 
-**Zero overhead until you actually use it.**
+**19x faster. Zero overhead until you actually use it.**
