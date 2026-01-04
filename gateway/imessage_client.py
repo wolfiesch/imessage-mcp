@@ -96,6 +96,10 @@ def cmd_messages(args):
     if args.json:
         print(json.dumps(messages, indent=2, default=str))
     else:
+        if not messages:
+            print("No messages found.")
+            return 0
+
         for m in messages:
             sender = "Me" if m.get('is_from_me') else contact.name
             text = m.get('text', '[media]') or '[media]'
@@ -113,6 +117,10 @@ def cmd_recent(args):
     if args.json:
         print(json.dumps(conversations, indent=2, default=str))
     else:
+        if not conversations:
+            print("No recent conversations found.")
+            return 0
+
         print("Recent Conversations:")
         print("-" * 60)
         for conv in conversations:
@@ -654,25 +662,29 @@ Examples:
     p_search = subparsers.add_parser('search', help='Search messages with a contact')
     p_search.add_argument('contact', help='Contact name (fuzzy matched)')
     p_search.add_argument('--query', '-q', help='Text to search for in messages')
-    p_search.add_argument('--limit', '-l', type=int, default=30, help='Max messages to return')
+    p_search.add_argument('--limit', '-l', type=int, default=30, choices=range(1, 501), metavar='N',
+                          help='Max messages to return (1-500, default: 30)')
     p_search.set_defaults(func=cmd_search)
 
     # messages command
     p_messages = subparsers.add_parser('messages', help='Get messages with a contact')
     p_messages.add_argument('contact', help='Contact name')
-    p_messages.add_argument('--limit', '-l', type=int, default=20, help='Max messages')
+    p_messages.add_argument('--limit', '-l', type=int, default=20, choices=range(1, 501), metavar='N',
+                            help='Max messages (1-500, default: 20)')
     p_messages.add_argument('--json', action='store_true', help='Output as JSON')
     p_messages.set_defaults(func=cmd_messages)
 
     # recent command
     p_recent = subparsers.add_parser('recent', help='Get recent conversations')
-    p_recent.add_argument('--limit', '-l', type=int, default=10, help='Max conversations')
+    p_recent.add_argument('--limit', '-l', type=int, default=10, choices=range(1, 501), metavar='N',
+                          help='Max conversations (1-500, default: 10)')
     p_recent.add_argument('--json', action='store_true', help='Output as JSON')
     p_recent.set_defaults(func=cmd_recent)
 
     # unread command
     p_unread = subparsers.add_parser('unread', help='Get unread messages')
-    p_unread.add_argument('--limit', '-l', type=int, default=20, help='Max messages')
+    p_unread.add_argument('--limit', '-l', type=int, default=20, choices=range(1, 501), metavar='N',
+                          help='Max messages (1-500, default: 20)')
     p_unread.add_argument('--json', action='store_true', help='Output as JSON')
     p_unread.set_defaults(func=cmd_unread)
 
@@ -690,14 +702,17 @@ Examples:
     # analytics command
     p_analytics = subparsers.add_parser('analytics', help='Get conversation analytics')
     p_analytics.add_argument('contact', nargs='?', help='Contact name (optional)')
-    p_analytics.add_argument('--days', '-d', type=int, default=30, help='Days to analyze')
+    p_analytics.add_argument('--days', '-d', type=int, default=30, choices=range(1, 366), metavar='N',
+                             help='Days to analyze (1-365, default: 30)')
     p_analytics.add_argument('--json', action='store_true', help='Output as JSON')
     p_analytics.set_defaults(func=cmd_analytics)
 
     # followup command
     p_followup = subparsers.add_parser('followup', help='Detect messages needing follow-up')
-    p_followup.add_argument('--days', '-d', type=int, default=7, help='Days to look back')
-    p_followup.add_argument('--stale', '-s', type=int, default=2, help='Min stale days')
+    p_followup.add_argument('--days', '-d', type=int, default=7, choices=range(1, 366), metavar='N',
+                            help='Days to look back (1-365, default: 7)')
+    p_followup.add_argument('--stale', '-s', type=int, default=2, choices=range(1, 366), metavar='N',
+                            help='Min stale days (1-365, default: 2)')
     p_followup.add_argument('--json', action='store_true', help='Output as JSON')
     p_followup.set_defaults(func=cmd_followup)
 
@@ -707,7 +722,8 @@ Examples:
 
     # groups command
     p_groups = subparsers.add_parser('groups', help='List all group chats')
-    p_groups.add_argument('--limit', '-l', type=int, default=50, help='Max groups to return')
+    p_groups.add_argument('--limit', '-l', type=int, default=50, choices=range(1, 501), metavar='N',
+                          help='Max groups to return (1-500, default: 50)')
     p_groups.add_argument('--json', action='store_true', help='Output as JSON')
     p_groups.set_defaults(func=cmd_groups)
 
@@ -715,7 +731,8 @@ Examples:
     p_group_msg = subparsers.add_parser('group-messages', help='Get messages from a group chat')
     p_group_msg.add_argument('--group-id', '-g', dest='group_id', help='Group chat ID')
     p_group_msg.add_argument('--participant', '-p', help='Filter by participant phone/email')
-    p_group_msg.add_argument('--limit', '-l', type=int, default=50, help='Max messages')
+    p_group_msg.add_argument('--limit', '-l', type=int, default=50, choices=range(1, 501), metavar='N',
+                             help='Max messages (1-500, default: 50)')
     p_group_msg.add_argument('--json', action='store_true', help='Output as JSON')
     p_group_msg.set_defaults(func=cmd_group_messages)
 
@@ -723,16 +740,18 @@ Examples:
     p_attach = subparsers.add_parser('attachments', help='Get attachments (photos, videos, files)')
     p_attach.add_argument('contact', nargs='?', help='Contact name (optional)')
     p_attach.add_argument('--type', '-t', help='MIME type filter (e.g., "image/", "video/")')
-    p_attach.add_argument('--limit', '-l', type=int, default=50, help='Max attachments')
+    p_attach.add_argument('--limit', '-l', type=int, default=50, choices=range(1, 501), metavar='N',
+                          help='Max attachments (1-500, default: 50)')
     p_attach.add_argument('--json', action='store_true', help='Output as JSON')
     p_attach.set_defaults(func=cmd_attachments)
 
     # add-contact command
     p_add = subparsers.add_parser('add-contact', help='Add a new contact')
     p_add.add_argument('name', help='Contact name')
-    p_add.add_argument('phone', help='Phone number (e.g., +14155551234)')
+    p_add.add_argument('phone', help='Phone number (e.g., +14155551234 or +1-415-555-1234)')
     p_add.add_argument('--relationship', '-r', default='other',
-                       help='Relationship type (friend, family, colleague, professional, other)')
+                       choices=['friend', 'family', 'colleague', 'professional', 'other'],
+                       help='Relationship type (default: other)')
     p_add.add_argument('--notes', '-n', help='Notes about the contact')
     p_add.set_defaults(func=cmd_add_contact)
 
@@ -743,29 +762,34 @@ Examples:
     # reactions command
     p_react = subparsers.add_parser('reactions', help='Get reactions (tapbacks) from messages')
     p_react.add_argument('contact', nargs='?', help='Contact name (optional)')
-    p_react.add_argument('--limit', '-l', type=int, default=100, help='Max reactions')
+    p_react.add_argument('--limit', '-l', type=int, default=100, choices=range(1, 501), metavar='N',
+                         help='Max reactions (1-500, default: 100)')
     p_react.add_argument('--json', action='store_true', help='Output as JSON')
     p_react.set_defaults(func=cmd_reactions)
 
     # links command
     p_links = subparsers.add_parser('links', help='Extract URLs shared in conversations')
     p_links.add_argument('contact', nargs='?', help='Contact name (optional)')
-    p_links.add_argument('--days', '-d', type=int, help='Days to look back')
-    p_links.add_argument('--limit', '-l', type=int, default=100, help='Max links')
+    p_links.add_argument('--days', '-d', type=int, choices=range(1, 366), metavar='N',
+                         help='Days to look back (1-365)')
+    p_links.add_argument('--limit', '-l', type=int, default=100, choices=range(1, 501), metavar='N',
+                         help='Max links (1-500, default: 100)')
     p_links.add_argument('--json', action='store_true', help='Output as JSON')
     p_links.set_defaults(func=cmd_links)
 
     # voice command
     p_voice = subparsers.add_parser('voice', help='Get voice messages with file paths')
     p_voice.add_argument('contact', nargs='?', help='Contact name (optional)')
-    p_voice.add_argument('--limit', '-l', type=int, default=50, help='Max voice messages')
+    p_voice.add_argument('--limit', '-l', type=int, default=50, choices=range(1, 501), metavar='N',
+                         help='Max voice messages (1-500, default: 50)')
     p_voice.add_argument('--json', action='store_true', help='Output as JSON')
     p_voice.set_defaults(func=cmd_voice)
 
     # thread command
     p_thread = subparsers.add_parser('thread', help='Get messages in a reply thread')
     p_thread.add_argument('--guid', '-g', required=True, help='Message GUID to get thread for')
-    p_thread.add_argument('--limit', '-l', type=int, default=50, help='Max messages')
+    p_thread.add_argument('--limit', '-l', type=int, default=50, choices=range(1, 501), metavar='N',
+                          help='Max messages (1-500, default: 50)')
     p_thread.add_argument('--json', action='store_true', help='Output as JSON')
     p_thread.set_defaults(func=cmd_thread)
 
@@ -775,15 +799,19 @@ Examples:
 
     # handles command
     p_handles = subparsers.add_parser('handles', help='List all phone/email handles from recent messages')
-    p_handles.add_argument('--days', '-d', type=int, default=30, help='Days to look back')
-    p_handles.add_argument('--limit', '-l', type=int, default=100, help='Max handles')
+    p_handles.add_argument('--days', '-d', type=int, default=30, choices=range(1, 366), metavar='N',
+                           help='Days to look back (1-365, default: 30)')
+    p_handles.add_argument('--limit', '-l', type=int, default=100, choices=range(1, 501), metavar='N',
+                           help='Max handles (1-500, default: 100)')
     p_handles.add_argument('--json', action='store_true', help='Output as JSON')
     p_handles.set_defaults(func=cmd_handles)
 
     # unknown command
     p_unknown = subparsers.add_parser('unknown', help='Find messages from senders not in contacts')
-    p_unknown.add_argument('--days', '-d', type=int, default=30, help='Days to look back')
-    p_unknown.add_argument('--limit', '-l', type=int, default=100, help='Max unknown senders')
+    p_unknown.add_argument('--days', '-d', type=int, default=30, choices=range(1, 366), metavar='N',
+                           help='Days to look back (1-365, default: 30)')
+    p_unknown.add_argument('--limit', '-l', type=int, default=100, choices=range(1, 501), metavar='N',
+                           help='Max unknown senders (1-500, default: 100)')
     p_unknown.add_argument('--json', action='store_true', help='Output as JSON')
     p_unknown.set_defaults(func=cmd_unknown)
 
@@ -795,8 +823,10 @@ Examples:
     # summary command
     p_summary = subparsers.add_parser('summary', help='Get conversation formatted for AI summarization')
     p_summary.add_argument('contact', help='Contact name')
-    p_summary.add_argument('--days', '-d', type=int, help='Days to include')
-    p_summary.add_argument('--limit', '-l', type=int, default=200, help='Max messages')
+    p_summary.add_argument('--days', '-d', type=int, choices=range(1, 366), metavar='N',
+                           help='Days to include (1-365)')
+    p_summary.add_argument('--limit', '-l', type=int, default=200, choices=range(1, 501), metavar='N',
+                           help='Max messages (1-500, default: 200)')
     p_summary.add_argument('--json', action='store_true', help='Output as JSON')
     p_summary.set_defaults(func=cmd_summary)
 

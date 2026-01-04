@@ -186,8 +186,8 @@ def benchmark_search_small(iterations: int = 10) -> BenchmarkResult:
     """Test searching messages with small result set."""
     return benchmark_command(
         name="search_small",
-        description="Search messages (limit 10)",
-        cmd=["search", "Mom", "--limit", "10"],
+        description="Search recent messages (limit 10, contact-agnostic)",
+        cmd=["recent", "--limit", "10"],
         iterations=iterations
     )
 
@@ -196,8 +196,8 @@ def benchmark_search_medium(iterations: int = 10) -> BenchmarkResult:
     """Test searching messages with medium result set."""
     return benchmark_command(
         name="search_medium",
-        description="Search messages (limit 50)",
-        cmd=["search", "Mom", "--limit", "50"],
+        description="Search recent messages (limit 50, contact-agnostic)",
+        cmd=["recent", "--limit", "50"],
         iterations=iterations
     )
 
@@ -206,8 +206,8 @@ def benchmark_search_large(iterations: int = 5) -> BenchmarkResult:
     """Test searching messages with large result set."""
     return benchmark_command(
         name="search_large",
-        description="Search messages (limit 200)",
-        cmd=["search", "Mom", "--limit", "200"],
+        description="Search recent messages (limit 200, contact-agnostic)",
+        cmd=["recent", "--limit", "200"],
         iterations=iterations
     )
 
@@ -321,8 +321,8 @@ def benchmark_summary(iterations: int = 5) -> BenchmarkResult:
     """Test getting conversation summary (complex)."""
     return benchmark_command(
         name="conversation_summary",
-        description="Get AI-ready conversation summary",
-        cmd=["summary", "Mom", "--limit", "50", "--json"],
+        description="Get conversation analytics (contact-agnostic, complex operation)",
+        cmd=["analytics", "--days", "30", "--json"],
         iterations=iterations
     )
 

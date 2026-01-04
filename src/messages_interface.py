@@ -71,6 +71,30 @@ def is_group_chat_identifier(chat_identifier: Optional[str]) -> bool:
     return False
 
 
+def sanitize_like_pattern(value: str) -> str:
+    """
+    Escape SQL LIKE wildcards in user input to prevent pattern injection.
+
+    LIKE patterns use % (any chars) and _ (single char) as wildcards.
+    User input must be escaped to prevent unintended matching behavior
+    or performance issues from overly broad patterns.
+
+    Args:
+        value: User-provided string to be used in a LIKE clause
+
+    Returns:
+        Escaped string safe for use in SQL LIKE patterns
+
+    Example:
+        >>> sanitize_like_pattern("test%value")
+        'test\\%value'
+    """
+    if not value:
+        return value
+    # Escape backslashes first, then LIKE wildcards
+    return value.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+
+
 def parse_attributed_body(blob: bytes) -> Optional[str]:
     """
     Parse the attributedBody column from macOS Messages database.
@@ -922,7 +946,7 @@ class MessagesInterface:
                     JOIN handle h ON chj.handle_id = h.ROWID
                     WHERE h.id LIKE ?
                         AND (c.chat_identifier LIKE 'chat%' OR c.display_name IS NOT NULL)
-                """, (f"%{participant_filter}%",))
+                """, (f"%{sanitize_like_pattern(participant_filter)}%",))
 
             chats = cursor.fetchall()
 
@@ -1130,7 +1154,7 @@ class MessagesInterface:
 
             if phone:
                 query += " AND h.id LIKE ?"
-                params.append(f"%{phone}%")
+                params.append(f"%{sanitize_like_pattern(phone)}%")
 
             if mime_type_filter:
                 query += " AND a.mime_type LIKE ?"
@@ -1347,7 +1371,7 @@ class MessagesInterface:
 
             if phone:
                 query += " AND h.id LIKE ?"
-                params.append(f"%{phone}%")
+                params.append(f"%{sanitize_like_pattern(phone)}%")
 
             query += " ORDER BY r.date DESC LIMIT ?"
             params.append(limit)
@@ -1451,7 +1475,7 @@ class MessagesInterface:
 
             if phone:
                 base_filter += " AND h.id LIKE ?"
-                params.append(f"%{phone}%")
+                params.append(f"%{sanitize_like_pattern(phone)}%")
 
             # Get total counts
             cursor.execute(f"""
@@ -1737,7 +1761,7 @@ class MessagesInterface:
 
             if phone:
                 query += " AND h.id LIKE ?"
-                params.append(f"%{phone}%")
+                params.append(f"%{sanitize_like_pattern(phone)}%")
 
             if days:
                 cutoff_date = datetime.now() - timedelta(days=days)
@@ -1872,7 +1896,7 @@ class MessagesInterface:
 
             if phone:
                 query += " AND h.id LIKE ?"
-                params.append(f"%{phone}%")
+                params.append(f"%{sanitize_like_pattern(phone)}%")
 
             query += " ORDER BY m.date DESC LIMIT ?"
             params.append(limit)
@@ -2657,6 +2681,8 @@ class MessagesInterface:
                     # Extract text content
                     msg_text = text
                     if not msg_text and blob:
+                        # Fixed 01/04/2026: extract_text_from_blob is a module-level function (line ~147),
+                        # not a class method. Previously incorrectly called as self.extract_text_from_blob()
                         msg_text = extract_text_from_blob(blob)
                     if not msg_text:
                         msg_text = "[attachment or empty]"
