@@ -5,14 +5,20 @@ iMessage Gateway Client - Standalone CLI for iMessage operations.
 No MCP server required. Queries Messages.db directly and uses
 the imessage-mcp library for contact resolution and message parsing.
 
+This is the primary interface for iMessage operations, offering 19x faster
+execution than the deprecated MCP server approach.
+
 Usage:
-    python3 gateway/imessage_client.py search "Angus" --limit 20
+    python3 gateway/imessage_client.py find "Angus" --query "SF"
     python3 gateway/imessage_client.py messages "John" --limit 20
     python3 gateway/imessage_client.py recent --limit 10
     python3 gateway/imessage_client.py unread
     python3 gateway/imessage_client.py send "John" "Running late!"
+    python3 gateway/imessage_client.py send-by-phone +14155551234 "Hi"
     python3 gateway/imessage_client.py contacts
     python3 gateway/imessage_client.py analytics "Sarah" --days 30
+    python3 gateway/imessage_client.py search "dinner plans"    # Semantic search (RAG)
+    python3 gateway/imessage_client.py index --source=imessage  # Index for RAG
 """
 
 import sys
@@ -54,8 +60,8 @@ def resolve_contact(cm: ContactsManager, name: str):
     return contact
 
 
-def cmd_search(args):
-    """Search messages with a contact."""
+def cmd_find(args):
+    """Find messages with a contact (keyword search)."""
     mi, cm = get_interfaces()
     contact = resolve_contact(cm, args.contact)
 
@@ -70,14 +76,17 @@ def cmd_search(args):
     else:
         messages = mi.get_messages_by_phone(contact.phone, limit=args.limit)
 
-    print(f"Messages with {contact.name} ({contact.phone}):")
-    print("-" * 60)
+    if args.json:
+        print(json.dumps(messages, indent=2, default=str))
+    else:
+        print(f"Messages with {contact.name} ({contact.phone}):")
+        print("-" * 60)
 
-    for m in messages:
-        sender = "Me" if m.get('is_from_me') else contact.name
-        text = m.get('text', '[media/attachment]') or '[media/attachment]'
-        timestamp = m.get('timestamp', '')
-        print(f"{timestamp} | {sender}: {text[:200]}")
+        for m in messages:
+            sender = "Me" if m.get('is_from_me') else contact.name
+            text = m.get('text', '[media/attachment]') or '[media/attachment]'
+            timestamp = m.get('timestamp', '')
+            print(f"{timestamp} | {sender}: {text[:200]}")
 
     return 0
 
@@ -174,6 +183,39 @@ def cmd_send(args):
         return 0
     else:
         print(f"Failed to send: {result.get('error', 'Unknown error')}", file=sys.stderr)
+        return 1
+
+
+def cmd_send_by_phone(args):
+    """Send a message directly to a phone number (no contact lookup)."""
+    mi, _ = get_interfaces()
+
+    # Normalize phone number (strip formatting)
+    phone = (
+        args.phone.strip()
+        .replace(" ", "")
+        .replace("-", "")
+        .replace("(", "")
+        .replace(")", "")
+    )
+
+    message = " ".join(args.message)
+
+    print(f"Sending to {phone}: {message[:50]}...", file=sys.stderr)
+    result = mi.send_message(phone, message)
+
+    if result.get('success'):
+        if args.json:
+            print(json.dumps({"success": True, "phone": phone, "message": message}))
+        else:
+            print("Message sent successfully.", file=sys.stderr)
+        return 0
+    else:
+        error = result.get('error', 'Unknown error')
+        if args.json:
+            print(json.dumps({"success": False, "phone": phone, "error": error}))
+        else:
+            print(f"Failed to send: {error}", file=sys.stderr)
         return 1
 
 
@@ -640,31 +682,347 @@ def cmd_summary(args):
     return 0
 
 
+# =============================================================================
+# RAG COMMANDS - Semantic Search & Knowledge Base
+# =============================================================================
+
+
+def get_unified_retriever():
+    """Get UnifiedRetriever instance (lazy import for faster startup)."""
+    from src.rag.unified import UnifiedRetriever
+    return UnifiedRetriever()
+
+
+def cmd_index(args):
+    """Index content from a source for semantic search."""
+    import time
+    start = time.time()
+
+    source = args.source.lower()
+    valid_sources = ['imessage', 'superwhisper', 'notes', 'local', 'gmail', 'slack', 'calendar']
+
+    if source not in valid_sources:
+        print(f"Error: Unknown source '{source}'", file=sys.stderr)
+        print(f"Valid sources: {', '.join(valid_sources)}", file=sys.stderr)
+        return 1
+
+    try:
+        if source == 'imessage':
+            # iMessage needs MessagesInterface and ContactsManager
+            mi, cm = get_interfaces()
+            from src.rag.unified import UnifiedRetriever
+            from src.rag.unified.imessage_indexer import ImessageIndexer
+
+            retriever = UnifiedRetriever()
+            indexer = ImessageIndexer(
+                messages_interface=mi,
+                contacts_manager=cm,
+                store=retriever.store,
+            )
+            result = indexer.index(
+                days=args.days,
+                limit=args.limit,
+                contact_name=args.contact,
+                incremental=not args.full,
+            )
+        elif source == 'superwhisper':
+            retriever = get_unified_retriever()
+            result = retriever.index_superwhisper(days=args.days, limit=args.limit)
+        elif source == 'notes':
+            retriever = get_unified_retriever()
+            result = retriever.index_notes(days=args.days, limit=args.limit)
+        elif source == 'local':
+            retriever = get_unified_retriever()
+            result = retriever.index_local_sources(days=args.days)
+        else:
+            # Gmail, Slack, Calendar require pre-fetched data
+            print(f"Error: Source '{source}' requires pre-fetched data.", file=sys.stderr)
+            print("Use the appropriate MCP tools to fetch data first, then pass to the indexer.", file=sys.stderr)
+            return 1
+
+        elapsed = time.time() - start
+
+        if args.json:
+            result['elapsed_seconds'] = elapsed
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            chunks_indexed = result.get('chunks_indexed', 0)
+            chunks_found = result.get('chunks_found', chunks_indexed)
+            print(f"✓ Indexed {source}")
+            print(f"  Chunks found: {chunks_found}")
+            print(f"  Chunks indexed: {chunks_indexed}")
+            print(f"  Duration: {elapsed:.1f}s")
+
+            if source == 'local':
+                by_source = result.get('by_source', {})
+                for src, info in by_source.items():
+                    print(f"  - {src}: {info.get('chunks_indexed', 0)} chunks")
+
+        return 0
+
+    except Exception as e:
+        print(f"Error indexing {source}: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_search(args):
+    """Semantic search across indexed knowledge base."""
+    try:
+        retriever = get_unified_retriever()
+
+        # Parse sources if provided
+        sources = None
+        if args.sources:
+            sources = [s.strip() for s in args.sources.split(',')]
+
+        results = retriever.search(
+            query=args.query,
+            sources=sources,
+            limit=args.limit,
+            days=args.days,
+        )
+
+        if args.json:
+            print(json.dumps(results, indent=2, default=str))
+        else:
+            if not results:
+                print(f'No results found for: "{args.query}"')
+                return 0
+
+            print(f'Found {len(results)} result(s) for: "{args.query}"')
+            print("-" * 60)
+
+            for i, result in enumerate(results, 1):
+                score = result.get('score', 0) * 100
+                source = result.get('source', 'unknown')
+                title = result.get('title') or result.get('context_id', '')[:30]
+                timestamp = result.get('timestamp', '')[:10] if result.get('timestamp') else ''
+                text = result.get('text', '')[:200]
+
+                print(f"\n[{i}] [{source}] {title} | {timestamp} | {score:.0f}% match")
+                print(f"    {text}...")
+
+        return 0
+
+    except Exception as e:
+        print(f"Error searching: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_ask(args):
+    """Get AI-formatted context from knowledge base."""
+    try:
+        retriever = get_unified_retriever()
+
+        # Parse sources if provided
+        sources = None
+        if args.sources:
+            sources = [s.strip() for s in args.sources.split(',')]
+
+        context = retriever.ask(
+            question=args.question,
+            sources=sources,
+            limit=args.limit,
+            days=args.days,
+        )
+
+        if args.json:
+            print(json.dumps({"question": args.question, "context": context}, indent=2))
+        else:
+            print(context)
+
+        return 0
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_stats(args):
+    """Show statistics about the indexed knowledge base."""
+    try:
+        retriever = get_unified_retriever()
+        stats = retriever.get_stats(source=args.source)
+
+        if args.json:
+            print(json.dumps(stats, indent=2, default=str))
+        else:
+            total = stats.get('total_chunks', 0)
+            if total == 0:
+                print("Knowledge base is empty.")
+                print("\nRun 'index --source=<source>' to start indexing:")
+                print("  index --source=imessage      Index iMessage conversations")
+                print("  index --source=superwhisper  Index voice transcriptions")
+                print("  index --source=notes         Index markdown notes")
+                print("  index --source=local         Index all local sources")
+                return 0
+
+            print("Knowledge Base Statistics")
+            print("=" * 40)
+            print(f"Total chunks indexed: {total}")
+            print(f"Unique participants: {stats.get('unique_participants', 0)}")
+            print(f"Unique tags: {stats.get('unique_tags', 0)}")
+
+            by_source = stats.get('by_source', {})
+            if by_source:
+                print("\nBy Source:")
+                for src, info in sorted(by_source.items()):
+                    count = info.get('chunk_count', 0)
+                    if count > 0:
+                        oldest = info.get('oldest', 'N/A')[:10] if info.get('oldest') else 'N/A'
+                        newest = info.get('newest', 'N/A')[:10] if info.get('newest') else 'N/A'
+                        print(f"  {src}: {count} chunks ({oldest} to {newest})")
+
+        return 0
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_clear(args):
+    """Clear indexed data from the knowledge base."""
+    try:
+        retriever = get_unified_retriever()
+
+        # Get current stats for confirmation
+        stats = retriever.get_stats(source=args.source)
+        total = stats.get('total_chunks', 0)
+
+        if total == 0:
+            print("Nothing to clear - knowledge base is empty.")
+            return 0
+
+        if not args.force:
+            source_msg = f" for source '{args.source}'" if args.source else ""
+            print(f"About to delete {total} chunks{source_msg}.")
+            print("Use --force to confirm deletion.")
+            return 1
+
+        deleted = retriever.clear(source=args.source)
+
+        if args.json:
+            print(json.dumps({"deleted_chunks": deleted, "source": args.source or "all"}, indent=2))
+        else:
+            print(f"✓ Deleted {deleted} chunks")
+
+        return 0
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_sources(args):
+    """List available and indexed sources."""
+    try:
+        retriever = get_unified_retriever()
+
+        available = retriever.list_sources()
+        indexed = retriever.get_indexed_sources()
+        stats = retriever.get_stats()
+        by_source = stats.get('by_source', {})
+
+        if args.json:
+            result = {
+                "available": available,
+                "indexed": indexed,
+                "details": {
+                    src: by_source.get(src, {}).get('chunk_count', 0)
+                    for src in available
+                }
+            }
+            print(json.dumps(result, indent=2))
+        else:
+            print("Available Sources:")
+            print("-" * 40)
+            for src in available:
+                count = by_source.get(src, {}).get('chunk_count', 0)
+                status = f"({count} chunks)" if count > 0 else "(not indexed)"
+                marker = "✓" if src in indexed else " "
+                print(f"  {marker} {src} {status}")
+
+            print("\nTo index a source:")
+            print("  index --source=<source> [--days=30]")
+
+        return 0
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_migrate(args):
+    """Migrate from legacy RAG collection to unified collection."""
+    try:
+        retriever = get_unified_retriever()
+
+        # Check if migration is needed
+        stats = retriever.get_stats()
+        imessage_chunks = stats.get('by_source', {}).get('imessage', {}).get('chunk_count', 0)
+
+        if imessage_chunks > 0 and not args.force:
+            print(f"iMessage already has {imessage_chunks} chunks in unified collection.")
+            print("Use --force to migrate anyway (may create duplicates).")
+            return 0
+
+        # Check for legacy collection
+        try:
+            from src.rag.store import MessageVectorStore
+            legacy_store = MessageVectorStore()
+            legacy_stats = legacy_store.get_stats()
+            legacy_count = legacy_stats.get('chunk_count', 0)
+
+            if legacy_count == 0:
+                print("No legacy data to migrate.")
+                return 0
+
+            print(f"Found {legacy_count} chunks in legacy collection.")
+
+        except Exception:
+            print("No legacy RAG system found or it's not accessible.")
+            return 0
+
+        # Perform migration
+        print("Migration requires manual implementation - see migrate_rag_data handler.")
+        print("For now, re-index iMessage using: index --source=imessage --full")
+
+        return 0
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="iMessage Gateway - Standalone CLI for iMessage operations",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s search "Angus" --query "SF"     Search messages with Angus containing "SF"
+  %(prog)s find "Angus" --query "SF"       Find messages with Angus containing "SF"
   %(prog)s messages "John" --limit 10      Get last 10 messages with John
   %(prog)s recent                          Show recent conversations
   %(prog)s unread                          Show unread messages
   %(prog)s send "John" "Running late!"     Send message to John
+  %(prog)s send-by-phone +14155551234 "Hi" Send directly to phone number
   %(prog)s contacts                        List all contacts
   %(prog)s followup --days 7               Find messages needing follow-up
+  %(prog)s search "dinner plans"           Semantic search across indexed messages
+  %(prog)s index --source=imessage         Index iMessages for semantic search
         """
     )
 
     subparsers = parser.add_subparsers(dest='command', help='Command to run')
 
-    # search command
-    p_search = subparsers.add_parser('search', help='Search messages with a contact')
-    p_search.add_argument('contact', help='Contact name (fuzzy matched)')
-    p_search.add_argument('--query', '-q', help='Text to search for in messages')
-    p_search.add_argument('--limit', '-l', type=int, default=30, choices=range(1, 501), metavar='N',
-                          help='Max messages to return (1-500, default: 30)')
-    p_search.set_defaults(func=cmd_search)
+    # find command (keyword search in messages)
+    p_find = subparsers.add_parser('find', help='Find messages with a contact (keyword search)')
+    p_find.add_argument('contact', help='Contact name (fuzzy matched)')
+    p_find.add_argument('--query', '-q', help='Text to search for in messages')
+    p_find.add_argument('--limit', '-l', type=int, default=30, choices=range(1, 501), metavar='N',
+                        help='Max messages to return (1-500, default: 30)')
+    p_find.add_argument('--json', action='store_true', help='Output as JSON')
+    p_find.set_defaults(func=cmd_find)
 
     # messages command
     p_messages = subparsers.add_parser('messages', help='Get messages with a contact')
@@ -693,6 +1051,13 @@ Examples:
     p_send.add_argument('contact', help='Contact name')
     p_send.add_argument('message', nargs='+', help='Message to send')
     p_send.set_defaults(func=cmd_send)
+
+    # send-by-phone command
+    p_send_phone = subparsers.add_parser('send-by-phone', help='Send message directly to phone number')
+    p_send_phone.add_argument('phone', help='Phone number (e.g., +14155551234)')
+    p_send_phone.add_argument('message', nargs='+', help='Message to send')
+    p_send_phone.add_argument('--json', action='store_true', help='Output as JSON')
+    p_send_phone.set_defaults(func=cmd_send_by_phone)
 
     # contacts command
     p_contacts = subparsers.add_parser('contacts', help='List all contacts')
@@ -829,6 +1194,73 @@ Examples:
                            help='Max messages (1-500, default: 200)')
     p_summary.add_argument('--json', action='store_true', help='Output as JSON')
     p_summary.set_defaults(func=cmd_summary)
+
+    # =========================================================================
+    # RAG COMMANDS - Semantic Search & Knowledge Base
+    # =========================================================================
+
+    # index command
+    p_index = subparsers.add_parser('index', help='Index content for semantic search')
+    p_index.add_argument('--source', '-s', required=True,
+                         choices=['imessage', 'superwhisper', 'notes', 'local', 'gmail', 'slack', 'calendar'],
+                         help='Source to index')
+    p_index.add_argument('--days', '-d', type=int, default=30,
+                         help='Days of history to index (default: 30)')
+    p_index.add_argument('--limit', '-l', type=int,
+                         help='Maximum items to index')
+    p_index.add_argument('--contact', '-c',
+                         help='For iMessage: index only this contact')
+    p_index.add_argument('--full', action='store_true',
+                         help='Full reindex (ignore incremental state)')
+    p_index.add_argument('--json', action='store_true', help='Output as JSON')
+    p_index.set_defaults(func=cmd_index)
+
+    # search command (semantic search)
+    p_search = subparsers.add_parser('search', help='Semantic search across indexed content')
+    p_search.add_argument('query', help='Search query')
+    p_search.add_argument('--sources', help='Comma-separated sources to search (default: all)')
+    p_search.add_argument('--days', '-d', type=int,
+                          help='Only search content from last N days')
+    p_search.add_argument('--limit', '-l', type=int, default=10,
+                          help='Max results (default: 10)')
+    p_search.add_argument('--json', action='store_true', help='Output as JSON')
+    p_search.set_defaults(func=cmd_search)
+
+    # ask command (formatted context for AI)
+    p_ask = subparsers.add_parser('ask', help='Get AI-formatted context from knowledge base')
+    p_ask.add_argument('question', help='Question to answer')
+    p_ask.add_argument('--sources', help='Comma-separated sources to search (default: all)')
+    p_ask.add_argument('--days', '-d', type=int,
+                       help='Only search content from last N days')
+    p_ask.add_argument('--limit', '-l', type=int, default=5,
+                       help='Max results to include (default: 5)')
+    p_ask.add_argument('--json', action='store_true', help='Output as JSON')
+    p_ask.set_defaults(func=cmd_ask)
+
+    # stats command
+    p_stats = subparsers.add_parser('stats', help='Show knowledge base statistics')
+    p_stats.add_argument('--source', '-s', help='Show stats for specific source')
+    p_stats.add_argument('--json', action='store_true', help='Output as JSON')
+    p_stats.set_defaults(func=cmd_stats)
+
+    # clear command
+    p_clear = subparsers.add_parser('clear', help='Clear indexed data')
+    p_clear.add_argument('--source', '-s', help='Clear only this source (default: all)')
+    p_clear.add_argument('--force', '-f', action='store_true',
+                         help='Skip confirmation prompt')
+    p_clear.add_argument('--json', action='store_true', help='Output as JSON')
+    p_clear.set_defaults(func=cmd_clear)
+
+    # sources command
+    p_sources = subparsers.add_parser('sources', help='List available and indexed sources')
+    p_sources.add_argument('--json', action='store_true', help='Output as JSON')
+    p_sources.set_defaults(func=cmd_sources)
+
+    # migrate command
+    p_migrate = subparsers.add_parser('migrate', help='Migrate from legacy RAG collection')
+    p_migrate.add_argument('--force', '-f', action='store_true',
+                           help='Migrate even if unified collection has data')
+    p_migrate.set_defaults(func=cmd_migrate)
 
     args = parser.parse_args()
 

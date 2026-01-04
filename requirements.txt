@@ -1,8 +1,8 @@
-# iMessage MCP Integration - Dependencies
-# Sprint 1 - Core MCP Server
+# iMessage Gateway CLI - Dependencies
+# Migrated from MCP to Gateway CLI architecture (01/04/2026)
 
-# MCP Python SDK
-mcp>=1.0.0
+# MCP Python SDK (ARCHIVED - using Gateway CLI instead)
+# mcp>=1.0.0  # See mcp_server_archive/ if you need to restore
 
 # RAG - Retrieval Augmented Generation (Sprint 4)
 chromadb>=0.4.0           # Vector store for embeddings
