@@ -164,12 +164,40 @@ Run the benchmark suite:
 python3 gateway/benchmarks.py           # Full suite
 python3 gateway/benchmarks.py --quick   # Quick check
 python3 gateway/benchmarks.py --json    # JSON output
+python3 gateway/benchmarks.py --target cpp --quick   # C++ gateway only
+python3 gateway/benchmarks.py --target both --quick  # Compare Python vs C++
 ```
 
 Latest results (20 benchmarks, 100% success):
 - Startup: ~44ms
 - Most operations: 40-65ms
 - Complex ops (analytics, attachments): 85-130ms
+
+## C++ Gateway CLI
+
+A compiled C++ variant of the gateway is available for startup/performance comparisons. It embeds the existing Python
+`MessagesInterface`/`ContactsManager` classes so feature coverage matches the Python CLI while trimming interpreter
+startup overhead.
+
+Build the binary:
+
+```bash
+g++ -std=c++17 gateway/cpp/imessage_client.cpp -o gateway/cpp/imessage_client \
+  $(python3-config --includes) $(python3-config --embed --ldflags)
+```
+
+Run commands (same interface as the Python gateway):
+
+```bash
+./gateway/cpp/imessage_client recent --limit 5 --json
+./gateway/cpp/imessage_client search "Angus" --query "SF"
+```
+
+Benchmark against the Python version:
+
+```bash
+python3 gateway/benchmarks.py --target both --quick
+```
 
 ## Requirements
 
