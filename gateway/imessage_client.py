@@ -18,6 +18,8 @@ Usage:
 import sys
 import argparse
 import json
+import io
+from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 
 # Add parent directory to path for imports
@@ -640,7 +642,8 @@ def cmd_summary(args):
     return 0
 
 
-def main():
+def create_parser() -> argparse.ArgumentParser:
+    """Build the argparse parser for the gateway CLI."""
     parser = argparse.ArgumentParser(
         description="iMessage Gateway - Standalone CLI for iMessage operations",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -830,6 +833,39 @@ Examples:
     p_summary.add_argument('--json', action='store_true', help='Output as JSON')
     p_summary.set_defaults(func=cmd_summary)
 
+    return parser
+
+
+def execute_cli(argv):
+    """Execute the gateway CLI programmatically.
+
+    Args:
+        argv: List of CLI arguments (excluding the program name)
+
+    Returns:
+        Tuple of (return_code, stdout, stderr)
+    """
+    parser = create_parser()
+    stdout_buffer = io.StringIO()
+    stderr_buffer = io.StringIO()
+
+    with redirect_stdout(stdout_buffer), redirect_stderr(stderr_buffer):
+        try:
+            args = parser.parse_args(argv)
+
+            if not args.command:
+                parser.print_help()
+                return 1, stdout_buffer.getvalue(), stderr_buffer.getvalue()
+
+            return_code = args.func(args)
+        except SystemExit as exc:
+            return_code = exc.code if isinstance(exc.code, int) else 1
+
+    return return_code, stdout_buffer.getvalue(), stderr_buffer.getvalue()
+
+
+def main():
+    parser = create_parser()
     args = parser.parse_args()
 
     if not args.command:
