@@ -83,7 +83,7 @@ Contact names are fuzzy-matched from `config/contacts.json`:
 
 ## JSON Output
 
-All commands support `--json` for structured output:
+The following commands support `--json` for structured output: `messages`, `recent`, `unread`, `contacts`, `analytics`, `followup`.
 
 ```bash
 python3 gateway/imessage_client.py messages "John" --json | jq '.[] | .text'

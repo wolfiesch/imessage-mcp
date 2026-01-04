@@ -48,12 +48,9 @@ def get_interfaces():
 def resolve_contact(cm: ContactsManager, name: str):
     """Resolve contact name to Contact object using fuzzy matching."""
     contact = cm.get_contact_by_name(name)
-    if not contact:
-        # Try partial match
-        matches = [c for c in cm.contacts if name.lower() in c.name.lower()]
-        if matches:
-            contact = matches[0]
-            print(f"Matched '{name}' to '{contact.name}'", file=sys.stderr)
+    # get_contact_by_name already does partial matching
+    if contact and contact.name.lower() != name.lower():
+        print(f"Matched '{name}' to '{contact.name}'", file=sys.stderr)
     return contact
 
 
@@ -63,15 +60,15 @@ def cmd_search(args):
     contact = resolve_contact(cm, args.contact)
 
     if not contact:
-        print(f"Contact '{args.contact}' not found.")
-        print("Available contacts:", ", ".join(c.name for c in cm.contacts[:10]))
+        print(f"Contact '{args.contact}' not found.", file=sys.stderr)
+        print("Available contacts:", ", ".join(c.name for c in cm.contacts[:10]), file=sys.stderr)
         return 1
 
-    messages = mi.get_messages_by_phone(contact.phone, limit=args.limit)
-
+    # Use efficient database-level search when query provided
     if args.query:
-        # Filter by search query
-        messages = [m for m in messages if args.query.lower() in (m.get('text') or '').lower()]
+        messages = mi.search_messages(query=args.query, phone=contact.phone, limit=args.limit)
+    else:
+        messages = mi.get_messages_by_phone(contact.phone, limit=args.limit)
 
     print(f"Messages with {contact.name} ({contact.phone}):")
     print("-" * 60)
@@ -91,7 +88,7 @@ def cmd_messages(args):
     contact = resolve_contact(cm, args.contact)
 
     if not contact:
-        print(f"Contact '{args.contact}' not found.")
+        print(f"Contact '{args.contact}' not found.", file=sys.stderr)
         return 1
 
     messages = mi.get_messages_by_phone(contact.phone, limit=args.limit)
@@ -156,19 +153,19 @@ def cmd_send(args):
     contact = resolve_contact(cm, args.contact)
 
     if not contact:
-        print(f"Contact '{args.contact}' not found.")
+        print(f"Contact '{args.contact}' not found.", file=sys.stderr)
         return 1
 
     message = " ".join(args.message)
 
-    print(f"Sending to {contact.name} ({contact.phone}): {message[:50]}...")
+    print(f"Sending to {contact.name} ({contact.phone}): {message[:50]}...", file=sys.stderr)
     result = mi.send_message(contact.phone, message)
 
     if result.get('success'):
-        print("Message sent successfully.")
+        print("Message sent successfully.", file=sys.stderr)
         return 0
     else:
-        print(f"Failed to send: {result.get('error', 'Unknown error')}")
+        print(f"Failed to send: {result.get('error', 'Unknown error')}", file=sys.stderr)
         return 1
 
 
@@ -194,7 +191,7 @@ def cmd_analytics(args):
     if args.contact:
         contact = resolve_contact(cm, args.contact)
         if not contact:
-            print(f"Contact '{args.contact}' not found.")
+            print(f"Contact '{args.contact}' not found.", file=sys.stderr)
             return 1
         analytics = mi.get_conversation_analytics(contact.phone, days=args.days)
     else:
@@ -213,23 +210,45 @@ def cmd_analytics(args):
 
 def cmd_followup(args):
     """Detect messages needing follow-up."""
-    mi, _ = get_interfaces()
+    mi, cm = get_interfaces()
 
     followups = mi.detect_follow_up_needed(days=args.days, min_stale_days=args.stale)
 
     if args.json:
         print(json.dumps(followups, indent=2, default=str))
     else:
-        if not followups:
+        # Check if there are any action items
+        summary = followups.get("summary", {})
+        total_items = summary.get("total_action_items", 0) if summary else 0
+
+        # Also count items across categories if no summary
+        if not total_items:
+            for key, items in followups.items():
+                if key not in ("summary", "analysis_period_days") and isinstance(items, list):
+                    total_items += len(items)
+
+        if not total_items:
             print("No follow-ups needed.")
             return 0
 
         print("Follow-ups Needed:")
         print("-" * 60)
-        for f in followups:
-            print(f"- {f.get('contact', 'Unknown')}: {f.get('reason', '')}")
-            if f.get('message'):
-                print(f"  Last message: {f['message'][:100]}")
+
+        # Iterate through categories (skip metadata keys)
+        for category, items in followups.items():
+            if category in ("summary", "analysis_period_days"):
+                continue
+            if not items or not isinstance(items, list):
+                continue
+
+            print(f"\n--- {category.replace('_', ' ').title()} ---")
+            for item in items:
+                phone = item.get('phone')
+                contact = cm.get_contact_by_phone(phone) if phone else None
+                name = contact.name if contact else phone or "Unknown"
+                text = item.get('text') or item.get('last_message', '')
+                date = item.get('date', '')
+                print(f"  {name}: {text[:100]} ({date})")
 
     return 0
 
@@ -257,7 +276,6 @@ Examples:
     p_search.add_argument('contact', help='Contact name (fuzzy matched)')
     p_search.add_argument('--query', '-q', help='Text to search for in messages')
     p_search.add_argument('--limit', '-l', type=int, default=30, help='Max messages to return')
-    p_search.add_argument('--days', '-d', type=int, default=90, help='Days to search back')
     p_search.set_defaults(func=cmd_search)
 
     # messages command
