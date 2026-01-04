@@ -146,8 +146,8 @@ The Gateway CLI is designed for fast integration with Claude Code via the Bash t
 
 ```bash
 # In Claude Code sessions (pre-approved, zero prompts)
-python3 ~/LIFE-PLANNER/Texting/gateway/imessage_client.py unread --json
-python3 ~/LIFE-PLANNER/Texting/gateway/imessage_client.py search "Sarah" --limit 10 --json
+python3 ~/path/to/imessage-mcp/gateway/imessage_client.py unread --json
+python3 ~/path/to/imessage-mcp/gateway/imessage_client.py search "Sarah" --limit 10 --json
 ```
 
 **Why use Gateway CLI instead of MCP tools?**
