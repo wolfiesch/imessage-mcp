@@ -1,149 +1,104 @@
 ---
 name: imessage-gateway
-description: On-demand iMessage access without MCP overhead. Use when user wants to search messages, check conversations, send texts, or find follow-ups on macOS.
-version: 1.0.0
+description: High-performance iMessage CLI (19x faster than MCP). Use for messaging operations on macOS.
+version: 3.1.0
 ---
 
-# iMessage Gateway (Zero MCP Overhead)
+# EXECUTE IMMEDIATELY
 
-Standalone CLI for iMessage operations. No MCP server required - queries Messages.db directly via Python.
+**ARGUMENTS:** {{ARGUMENTS}}
 
-## When to Use
-
-**Trigger on DIRECT communication intent:**
-- "Check messages with [name]"
-- "What did [name] say about..."
-- "Text [name]..."
-- "Who needs a reply?"
-- "Search my messages for..."
-
-**Require action verbs:** check, search, text, message, find
-
-## Quick Reference
-
-| Command | Purpose | Example |
-|---------|---------|---------|
-| `search` | Find messages with contact | `search "John" --query "meeting"` |
-| `messages` | Get conversation with contact | `messages "John" --limit 20` |
-| `recent` | Recent conversations | `recent --limit 10` |
-| `unread` | Unread messages | `unread` |
-| `send` | Send a message | `send "John" "Running late!"` |
-| `contacts` | List all contacts | `contacts` |
-| `followup` | Find messages needing reply | `followup --days 7` |
-| `analytics` | Conversation stats | `analytics "Sarah" --days 30` |
-
-## Usage
-
-All commands use the gateway CLI:
+When arguments are provided, execute via Bash NOW - do not just return this doc:
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py <command> [args]
+python3 ${SKILL_PATH}/../../gateway/imessage_client.py {{ARGUMENTS}} --json
 ```
 
-### Search Messages
+## Command Mapping (use FIRST match)
+
+| User says | Execute |
+|-----------|---------|
+| `recent [N]` | `recent --limit N` (default 50) |
+| `search "query"` | `search "query" --limit 50` |
+| `messages "name"` / `from "name"` | `messages "name" --limit 20` |
+| `unread` | `unread` |
+| `send "name" "msg"` | `send "name" "msg"` |
+| `analytics [days]` | `analytics --days N` (default 30) |
+| `followup [days]` | `followup --days N` (default 7) |
+| `groups` | `groups` |
+| `contacts` | `contacts` |
+| `attachments` | `attachments --json` |
+| `voice` | `voice --json` |
+| `links [days]` | `links --days N` (default 30) |
+| `handles [days]` | `handles --days N` (default 30) |
+| `unknown [days]` | `unknown --days N` (default 7) |
+| `summary "name" [days]` | `summary "name" --days N` (default 7) |
+
+**`--days` compatibility:**
+- Works with: `analytics`, `followup`, `links`, `handles`, `unknown`, `summary`
+- Does NOT work with: `recent`, `search`, `messages`, `unread`, `groups`
+
+---
+
+## Reference (only if no args provided)
+
+### Performance
+
+| Operation | Gateway CLI | MCP Tool | Speedup |
+|-----------|-------------|----------|---------|
+| List contacts | 40ms | ~763ms | **19x** |
+| Search messages | 43ms | ~763ms | **18x** |
+| Unread messages | 44ms | ~763ms | **17x** |
+| Groups | 61ms | ~763ms | **12x** |
+| Analytics | 129ms | ~850ms | **7x** |
+
+### Full Command Examples
 
 ```bash
-# All messages with John
-python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py search "John"
+# Recent messages
+python3 ${SKILL_PATH}/../../gateway/imessage_client.py recent --limit 50 --json
 
-# Messages containing "meeting"
-python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py search "John" --query "meeting"
+# Search messages
+python3 ${SKILL_PATH}/../../gateway/imessage_client.py search "dinner" --limit 50 --json
 
-# Last 50 messages
-python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py search "John" --limit 50
+# Messages from contact
+python3 ${SKILL_PATH}/../../gateway/imessage_client.py messages "Ever" --limit 20 --json
+
+# Unread messages
+python3 ${SKILL_PATH}/../../gateway/imessage_client.py unread --json
+
+# Send message
+python3 ${SKILL_PATH}/../../gateway/imessage_client.py send "Sarah" "Running late!"
+
+# Analytics
+python3 ${SKILL_PATH}/../../gateway/imessage_client.py analytics --days 30 --json
+
+# Follow-ups needed
+python3 ${SKILL_PATH}/../../gateway/imessage_client.py followup --days 7 --json
+
+# List groups
+python3 ${SKILL_PATH}/../../gateway/imessage_client.py groups --json
+
+# Contacts
+python3 ${SKILL_PATH}/../../gateway/imessage_client.py contacts --json
 ```
 
-### Get Conversation
+### When to Use MCP Instead
 
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py messages "John" --limit 10
-python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py messages "John" --json
-```
+Use MCP tools (`imessage-texting` skill) only for:
+- RAG/semantic search: `index_knowledge`, `search_knowledge`, `ask_messages`
+- Features not in gateway CLI
 
-### Check Unread
+### Contact Resolution
 
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py unread
-```
-
-### Send Message
-
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py send "John" "Running late!"
-python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py send "Mom" "Happy birthday!"
-```
-
-### Find Follow-ups
-
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py followup --days 7 --stale 2
-```
-
-### Analytics
-
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py analytics "Sarah" --days 30
-python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py analytics --days 7  # All contacts
-```
-
-## Contact Resolution
-
-Contact names are fuzzy-matched from `${CLAUDE_PLUGIN_ROOT}/config/contacts.json`:
-
-- "John" -> "John Doe" (first match)
-- "ang" -> "Angus Smith" (partial match)
+Names are fuzzy-matched from `config/contacts.json`:
+- "John" → "John Doe" (first match)
+- "ang" → "Angus Smith" (partial)
 - Case insensitive
 
-## Output Formats
+### Requirements
 
-The following commands support `--json` for structured output: `messages`, `recent`, `unread`, `contacts`, `analytics`, `followup`.
-
-```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/gateway/imessage_client.py messages "John" --json | jq '.[] | .text'
-```
-
-## Benefits Over MCP
-
-| Aspect | MCP Server | Gateway Script |
-|--------|------------|----------------|
-| Startup overhead | ~763ms | ~40ms |
-| Context tokens | ~3k tokens | ~0 (Bash only) |
-| Always running | Yes | No |
-| Complexity | Higher | Simple CLI |
-
-**19x faster execution with 80% fewer tokens.**
-
-## Requirements
-
-- macOS (Messages.app integration)
+- macOS with Messages.app
 - Python 3.9+
-- Full Disk Access permission for Terminal
-- Contacts synced to `${CLAUDE_PLUGIN_ROOT}/config/contacts.json`
-
-## Setup After Installation
-
-```bash
-# Sync contacts from macOS Contacts.app
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/sync_contacts.py
-
-# Install dependencies
-pip install -r ${CLAUDE_PLUGIN_ROOT}/requirements.txt
-```
-
-## Troubleshooting
-
-**"Contact not found"**
-- Run `contacts` command to list available names
-- Contacts loaded from `${CLAUDE_PLUGIN_ROOT}/config/contacts.json`
-
-**"Could not import modules"**
-- Ensure dependencies are installed: `pip install -r ${CLAUDE_PLUGIN_ROOT}/requirements.txt`
-
-**No messages shown**
-- Check Full Disk Access for Terminal
-- Messages.db location: `~/Library/Messages/chat.db`
-
----
-
-**Platform:** macOS only
-**Token Cost:** ~0 (Bash execution only)
+- Full Disk Access for Terminal
+- Contacts synced via `scripts/sync_contacts.py`
