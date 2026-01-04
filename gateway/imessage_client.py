@@ -364,7 +364,7 @@ def cmd_add_contact(args):
             relationship_type=args.relationship,
             notes=args.notes
         )
-        print(f"Contact '{args.name}' added successfully.", file=sys.stderr)
+        print(f"Contact '{args.name}' added successfully.")
         return 0
     except Exception as e:
         print(f"Failed to add contact: {e}", file=sys.stderr)
