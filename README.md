@@ -57,6 +57,18 @@ python3 gateway/imessage_client.py followup --days 7
 python3 gateway/imessage_client.py analytics "Sarah" --days 30
 ```
 
+### Rust gateway option
+
+A Rust rewrite of the gateway CLI lives in `gateway-rs/` with the same core commands:
+
+```bash
+cd gateway-rs
+cargo run -- unread --json
+cargo run -- search "John" --limit 10
+```
+
+Use `--contacts` to point at a custom `contacts.json` and `--database` to override the default `~/Library/Messages/chat.db` path.
+
 ### Architecture
 
 ```
