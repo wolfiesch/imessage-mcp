@@ -172,17 +172,93 @@ This repo includes a Claude Code skill at `.claude/skills/imessage-texting/` wit
 
 To use it, clone this repo - Claude Code will automatically pick up the skill from the `.claude/skills/` directory.
 
+## Unified RAG System (Semantic Search)
+
+The server includes a unified RAG (Retrieval-Augmented Generation) system for semantic search across multiple data sources.
+
+### Features
+
+- **Multi-source search**: Search across iMessage, SuperWhisper transcriptions, Notes, Gmail, Slack, and Calendar
+- **Incremental indexing**: Only index new messages since last run (35s → <1s for no-op)
+- **Unified interface**: Single search interface across all sources
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `index_knowledge` | Index content from sources (imessage, superwhisper, notes, gmail, slack, calendar) |
+| `search_knowledge` | Semantic search across indexed sources |
+| `knowledge_stats` | Get statistics about indexed content |
+
+### Migration from Old RAG System
+
+If you were using the old RAG system (`ask_messages`, `index_messages`), migrate to the new unified system:
+
+#### 1. Index with new system
+
+```python
+# New: Incremental mode (default) - only indexes new messages
+index_knowledge(source="imessage", incremental=True)
+
+# Or force full re-index if needed
+index_knowledge(source="imessage", incremental=False)
+```
+
+#### 2. Migrate old data (optional)
+
+If you have existing indexed data in the old system:
+
+```python
+# One-time migration: copies old collection to new
+migrate_rag_data()
+```
+
+#### 3. Use new search
+
+```python
+# Old way (deprecated)
+ask_messages(question="What did John say about the meeting?")
+
+# New way (recommended)
+search_knowledge(
+    query="What did John say about the meeting?",
+    sources=["imessage"]
+)
+```
+
+#### 4. Verify and clean up
+
+After migration:
+1. Test search with `search_knowledge(sources=["imessage"])`
+2. Verify results are correct
+3. Old RAG tools (`ask_messages`, `index_messages`) are deprecated but still functional
+
+### Performance
+
+- **Incremental indexing**: Second index run with no new messages: <1s (vs 35s full re-index)
+- **Baseline metrics**: See `benchmarks/results/indexing_baseline.json`
+- **Benchmark suite**: Run `python3 -m Texting.benchmarks.run_benchmarks`
+
 ## Development
 
 ```bash
 # Run tests
 pytest tests/ -v
 
+# Run specific test suite
+pytest tests/test_migration.py -v
+
+# Run performance benchmarks
+python3 -m Texting.benchmarks.run_benchmarks
+
 # Test MCP protocol manually
 python3 scripts/test_mcp_protocol.py
 
 # Test tools
 python3 scripts/test_mcp_tools.py
+
+# Audit old RAG usage
+python3 scripts/audit_old_rag.py
 ```
 
 ## Privacy & Security

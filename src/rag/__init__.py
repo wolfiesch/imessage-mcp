@@ -13,11 +13,9 @@ Components:
 
 from .chunker import ConversationChunker, ConversationChunk
 from .store import MessageVectorStore
-from .retriever import MessageRetriever
 
 __all__ = [
     "ConversationChunker",
     "ConversationChunk",
     "MessageVectorStore",
-    "MessageRetriever",
 ]

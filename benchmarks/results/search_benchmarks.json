@@ -1,0 +1,137 @@
+[
+  {
+    "name": "embedding_simple",
+    "elapsed_seconds": 0.018401917011942714,
+    "memory_used_mb": 9.25,
+    "timestamp": "2026-01-01T02:26:43.017772",
+    "metrics": {
+      "error": "'EmbeddingProvider' object has no attribute 'get_embedding'"
+    }
+  },
+  {
+    "name": "embedding_medium",
+    "elapsed_seconds": 0.01033333403756842,
+    "memory_used_mb": 0.03125,
+    "timestamp": "2026-01-01T02:26:43.017796",
+    "metrics": {
+      "error": "'EmbeddingProvider' object has no attribute 'get_embedding'"
+    }
+  },
+  {
+    "name": "embedding_complex",
+    "elapsed_seconds": 0.010642332956194878,
+    "memory_used_mb": 0.046875,
+    "timestamp": "2026-01-01T02:26:43.017798",
+    "metrics": {
+      "error": "'EmbeddingProvider' object has no attribute 'get_embedding'"
+    }
+  },
+  {
+    "name": "retrieval_simple_k5",
+    "elapsed_seconds": 1.5483653330011293,
+    "memory_used_mb": -815.546875,
+    "timestamp": "2026-01-01T02:26:43.017799",
+    "metrics": {
+      "results_returned": 5,
+      "latency_ms": 1534.60041701328,
+      "k": 5
+    }
+  },
+  {
+    "name": "retrieval_medium_k5",
+    "elapsed_seconds": 0.6950347080128267,
+    "memory_used_mb": -314.859375,
+    "timestamp": "2026-01-01T02:26:43.017800",
+    "metrics": {
+      "results_returned": 5,
+      "latency_ms": 683.1679589813575,
+      "k": 5
+    }
+  },
+  {
+    "name": "retrieval_complex_k5",
+    "elapsed_seconds": 0.681944084004499,
+    "memory_used_mb": -161.453125,
+    "timestamp": "2026-01-01T02:26:43.017801",
+    "metrics": {
+      "results_returned": 5,
+      "latency_ms": 670.1615420170128,
+      "k": 5
+    }
+  },
+  {
+    "name": "ask_simple",
+    "elapsed_seconds": 0.8006752909859642,
+    "memory_used_mb": -104.609375,
+    "timestamp": "2026-01-01T02:26:43.017802",
+    "metrics": {
+      "answer_length": 1819,
+      "total_latency_ms": 789.3691250355914
+    }
+  },
+  {
+    "name": "ask_medium",
+    "elapsed_seconds": 1.2023644169676118,
+    "memory_used_mb": 0.609375,
+    "timestamp": "2026-01-01T02:26:43.017803",
+    "metrics": {
+      "answer_length": 5368,
+      "total_latency_ms": 1191.4513329975307
+    }
+  },
+  {
+    "name": "k_scaling_k1",
+    "elapsed_seconds": 0.554671749996487,
+    "memory_used_mb": -2.4375,
+    "timestamp": "2026-01-01T02:26:43.017804",
+    "metrics": {
+      "k": 1,
+      "results_returned": 1,
+      "latency_ms": 0.0
+    }
+  },
+  {
+    "name": "k_scaling_k5",
+    "elapsed_seconds": 0.29788874997757375,
+    "memory_used_mb": -0.28125,
+    "timestamp": "2026-01-01T02:26:43.017805",
+    "metrics": {
+      "k": 5,
+      "results_returned": 5,
+      "latency_ms": 0.0
+    }
+  },
+  {
+    "name": "k_scaling_k10",
+    "elapsed_seconds": 0.7041383750038221,
+    "memory_used_mb": 3.640625,
+    "timestamp": "2026-01-01T02:26:43.017805",
+    "metrics": {
+      "k": 10,
+      "results_returned": 10,
+      "latency_ms": 0.0
+    }
+  },
+  {
+    "name": "k_scaling_k20",
+    "elapsed_seconds": 0.36573529202723876,
+    "memory_used_mb": -3.5,
+    "timestamp": "2026-01-01T02:26:43.017806",
+    "metrics": {
+      "k": 20,
+      "results_returned": 20,
+      "latency_ms": 0.0
+    }
+  },
+  {
+    "name": "k_scaling_k50",
+    "elapsed_seconds": 0.34822479099966586,
+    "memory_used_mb": 6.09375,
+    "timestamp": "2026-01-01T02:26:43.017807",
+    "metrics": {
+      "k": 50,
+      "results_returned": 50,
+      "latency_ms": 0.0
+    }
+  }
+]

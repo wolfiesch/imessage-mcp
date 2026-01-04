@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
+# ============================================================================
+# CHANGELOG (recent first, max 5 entries)
+# 01/03/2026 - Major refactoring: extracted handlers to modules, added tool registry (Claude)
+# ============================================================================
 """
 iMessage MCP Server - Personalized messaging with Life Planner integration.
+
+Refactored architecture with extracted utilities and handler modules.
 
 Sprint 1: Basic send/receive messages via MCP
 Sprint 2: Contact sync and fuzzy matching
@@ -15,10 +21,11 @@ import sys
 import json
 import logging
 from pathlib import Path
-from typing import Optional
 
-# Add parent directory to path for imports
+# Add parent directory to path for imports from src/
 sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add mcp_server directory to path for handler imports
+sys.path.insert(0, str(Path(__file__).parent))
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -27,12 +34,26 @@ from mcp import types
 from src.messages_interface import MessagesInterface
 from src.contacts_manager import ContactsManager
 
-# Project root directory (for resolving relative paths)
-PROJECT_ROOT = Path(__file__).parent.parent
+# Import configuration (from mcp_server/)
+from config import (
+    CONFIG,
+    PROJECT_ROOT,
+    resolve_path,
+    get_chroma_path,
+    get_contacts_config_path,
+    logger,
+)
+
+# Import handlers (from mcp_server/handlers/)
+from handlers import messaging, contacts, reading, groups, rag, analytics
+
+# Import response utilities (from mcp_server/utils/)
+from utils.responses import text_response
 
 # RAG imports (lazy loaded to avoid startup cost if not using RAG)
 _retriever = None
 _unified_retriever = None
+
 
 def get_retriever():
     """Lazy-load the MessageRetriever to avoid startup cost."""
@@ -41,8 +62,8 @@ def get_retriever():
         try:
             from src.rag.retriever import MessageRetriever
             _retriever = MessageRetriever(
-                persist_directory=str(PROJECT_ROOT / "data" / "chroma"),
-                contacts_config=str(PROJECT_ROOT / "config" / "contacts.json"),
+                persist_directory=get_chroma_path(),
+                contacts_config=get_contacts_config_path(),
             )
             logger.info("RAG retriever initialized")
         except ImportError as e:
@@ -58,7 +79,7 @@ def get_unified_retriever():
         try:
             from src.rag.unified import UnifiedRetriever
             _unified_retriever = UnifiedRetriever(
-                persist_directory=str(PROJECT_ROOT / "data" / "chroma"),
+                persist_directory=get_chroma_path(),
             )
             logger.info("Unified RAG retriever initialized")
         except ImportError as e:
@@ -66,103 +87,20 @@ def get_unified_retriever():
             raise
     return _unified_retriever
 
-# Configure logging with absolute path
-LOG_DIR = PROJECT_ROOT / "logs"
-LOG_DIR.mkdir(exist_ok=True)  # Ensure log directory exists
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_DIR / 'mcp_server.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
-# Load configuration
-CONFIG_PATH = PROJECT_ROOT / "config" / "mcp_server.json"
-with open(CONFIG_PATH) as f:
-    CONFIG = json.load(f)
-
-# Validation constants
-MAX_MESSAGE_LIMIT = 500  # Maximum messages to retrieve
-MAX_SEARCH_RESULTS = 500  # Maximum search results
-MIN_LIMIT = 1  # Minimum limit value
-
-
-def validate_positive_int(value, name: str, min_val: int = MIN_LIMIT, max_val: int = MAX_MESSAGE_LIMIT) -> tuple[int | None, str | None]:
-    """
-    Validate that a value is a positive integer within bounds.
-
-    Args:
-        value: Value to validate
-        name: Parameter name for error messages
-        min_val: Minimum allowed value
-        max_val: Maximum allowed value
-
-    Returns:
-        Tuple of (validated_value, error_message). If valid, error_message is None.
-    """
-    if value is None:
-        return None, None
-
-    try:
-        int_value = int(value)
-    except (TypeError, ValueError):
-        return None, f"Invalid {name}: must be an integer, got {type(value).__name__}"
-
-    if int_value < min_val:
-        return None, f"Invalid {name}: must be at least {min_val}, got {int_value}"
-
-    if int_value > max_val:
-        return None, f"Invalid {name}: must be at most {max_val}, got {int_value}"
-
-    return int_value, None
-
-
-def validate_non_empty_string(value, name: str) -> tuple[str | None, str | None]:
-    """
-    Validate that a value is a non-empty string.
-
-    Args:
-        value: Value to validate
-        name: Parameter name for error messages
-
-    Returns:
-        Tuple of (validated_value, error_message). If valid, error_message is None.
-    """
-    if value is None:
-        return None, f"Missing required parameter: {name}"
-
-    if not isinstance(value, str):
-        return None, f"Invalid {name}: must be a string, got {type(value).__name__}"
-
-    stripped = value.strip()
-    if not stripped:
-        return None, f"Invalid {name}: cannot be empty"
-
-    return stripped, None
-
-
-def resolve_path(path_str: str) -> str:
-    """Resolve a config path relative to PROJECT_ROOT or expand ~."""
-    path = Path(path_str)
-    if path_str.startswith("~"):
-        return str(path.expanduser())
-    elif path.is_absolute():
-        return str(path)
-    else:
-        return str(PROJECT_ROOT / path)
-
 
 # Initialize server
 app = Server(CONFIG["server_name"])
 
 # Initialize components with resolved paths
 messages = MessagesInterface(resolve_path(CONFIG["paths"]["messages_db"]))
-contacts = ContactsManager(resolve_path(CONFIG["paths"]["contacts_config"]))
+contacts_mgr = ContactsManager(resolve_path(CONFIG["paths"]["contacts_config"]))
 
+logger.info(f"MCP server initialized: {CONFIG['server_name']}")
+
+
+# =============================================================================
+# TOOL DEFINITIONS
+# =============================================================================
 
 @app.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
@@ -203,9 +141,60 @@ async def handle_list_tools() -> list[types.Tool]:
             }
         ),
         types.Tool(
+            name="send_message_by_phone",
+            description=(
+                "Send an iMessage directly to a phone number or iMessage handle, "
+                "without requiring a contact entry. Use for one-off messages to numbers not in contacts."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "phone_number": {
+                        "type": "string",
+                        "description": "Phone number (e.g., +14155551234) or iMessage handle (e.g., email@icloud.com)"
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Message text to send"
+                    }
+                },
+                "required": ["phone_number", "message"]
+            }
+        ),
+        types.Tool(
+            name="add_contact",
+            description=(
+                "Add a new contact to the contacts list. "
+                "The contact will be saved to contacts.json and available for future messaging."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Contact name (e.g., 'Dora Housing Guild')"
+                    },
+                    "phone": {
+                        "type": "string",
+                        "description": "Phone number (e.g., +18503066993)"
+                    },
+                    "relationship_type": {
+                        "type": "string",
+                        "description": "Relationship type (default: 'other'). Options: friend, family, colleague, professional, other"
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Optional notes about the contact"
+                    }
+                },
+                "required": ["name", "phone"]
+            }
+        ),
+        types.Tool(
             name="get_recent_messages",
             description=(
                 "Retrieve recent message history with a contact. "
+                "Supports pagination via offset parameter for full history retrieval. "
                 "Requires Full Disk Access permission for Messages database."
             ),
             inputSchema={
@@ -217,8 +206,13 @@ async def handle_list_tools() -> list[types.Tool]:
                     },
                     "limit": {
                         "type": "number",
-                        "description": "Number of recent messages to retrieve (default: 20)",
+                        "description": "Number of messages to retrieve (default: 20, max: 500)",
                         "default": 20
+                    },
+                    "offset": {
+                        "type": "number",
+                        "description": "Number of messages to skip for pagination (default: 0)",
+                        "default": 0
                     }
                 },
                 "required": ["contact_name"]
@@ -426,7 +420,7 @@ async def handle_list_tools() -> list[types.Tool]:
             name="index_knowledge",
             description=(
                 "Index content from multiple sources for unified semantic search. "
-                "Sources: 'superwhisper' (voice transcriptions), 'notes' (markdown documents), "
+                "Sources: 'imessage' (text conversations), 'superwhisper' (voice transcriptions), 'notes' (markdown documents), "
                 "'gmail' (emails - requires pre-fetched data), 'slack' (messages - requires pre-fetched data), "
                 "'calendar' (events - requires pre-fetched data). "
                 "Use source='local' to index both SuperWhisper and Notes at once."
@@ -436,8 +430,8 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "source": {
                         "type": "string",
-                        "description": "Source to index: 'superwhisper', 'notes', 'local' (both), 'gmail', 'slack', 'calendar'",
-                        "enum": ["superwhisper", "notes", "local", "gmail", "slack", "calendar"]
+                        "description": "Source to index: 'imessage', 'superwhisper', 'notes', 'local' (both), 'gmail', 'slack', 'calendar'",
+                        "enum": ["imessage", "superwhisper", "notes", "local", "gmail", "slack", "calendar"]
                     },
                     "days": {
                         "type": "number",
@@ -447,6 +441,15 @@ async def handle_list_tools() -> list[types.Tool]:
                     "limit": {
                         "type": "number",
                         "description": "Maximum items to index (default: no limit)"
+                    },
+                    "contact_name": {
+                        "type": "string",
+                        "description": "For iMessage: Optional contact name to index only that conversation"
+                    },
+                    "incremental": {
+                        "type": "boolean",
+                        "description": "For iMessage: If true, only index new messages since last run (default: true)",
+                        "default": True
                     }
                 },
                 "required": ["source"]
@@ -455,7 +458,7 @@ async def handle_list_tools() -> list[types.Tool]:
         types.Tool(
             name="search_knowledge",
             description=(
-                "Semantic search across all indexed sources (SuperWhisper, Notes, Gmail, Slack, Calendar). "
+                "Semantic search across all indexed sources (iMessage, SuperWhisper, Notes, Gmail, Slack, Calendar). "
                 "Finds relevant content based on meaning, not just keywords. "
                 "Can filter by specific sources. Run index_knowledge first to build the search index."
             ),
@@ -498,6 +501,20 @@ async def handle_list_tools() -> list[types.Tool]:
                         "description": "Optional: Get stats for specific source only"
                     }
                 },
+                "required": []
+            }
+        ),
+        types.Tool(
+            name="migrate_rag_data",
+            description=(
+                "One-time migration: copy old RAG collection to new unified collection. "
+                "Migrates data from 'imessage_chunks' to 'unified_imessage_chunks'. "
+                "Safe to run multiple times (idempotent). "
+                "Required before deleting old RAG system code."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
                 "required": []
             }
         ),
@@ -681,6 +698,54 @@ async def handle_list_tools() -> list[types.Tool]:
                 "required": []
             }
         ),
+        types.Tool(
+            name="list_recent_handles",
+            description=(
+                "List all unique phone numbers and email handles from recent messages. "
+                "Shows which are in your contacts vs unknown. "
+                "Useful for finding temporary numbers or people not in contacts."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "number",
+                        "description": "Number of days to look back (default: 30)",
+                        "default": 30
+                    },
+                    "limit": {
+                        "type": "number",
+                        "description": "Maximum handles to return (default: 100)",
+                        "default": 100
+                    }
+                },
+                "required": []
+            }
+        ),
+        types.Tool(
+            name="search_unknown_senders",
+            description=(
+                "Find messages from phone numbers not in your contacts. "
+                "Identifies unknown senders with sample messages. "
+                "Useful for finding temporary numbers, business contacts, or people to add."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "number",
+                        "description": "Number of days to look back (default: 30)",
+                        "default": 30
+                    },
+                    "limit": {
+                        "type": "number",
+                        "description": "Maximum messages to return (default: 100)",
+                        "default": 100
+                    }
+                },
+                "required": []
+            }
+        ),
         # ===== T2 FEATURES =====
         types.Tool(
             name="get_conversation_for_summary",
@@ -741,10 +806,66 @@ async def handle_list_tools() -> list[types.Tool]:
     ]
 
 
+# =============================================================================
+# TOOL DISPATCHER WITH REGISTRY PATTERN
+# =============================================================================
+
+# Tool registry: Maps tool names to their handlers and required dependencies
+# Dependency types:
+#   "messages_contacts" - needs messages and contacts
+#   "messages_only" - needs only messages
+#   "contacts_only" - needs only contacts
+#   "rag" - needs RAG retrievers and messages/contacts
+#   "analytics" - needs messages and contacts for analytics
+
+TOOL_REGISTRY = {
+    # Messaging handlers
+    "send_message": (messaging.handle_send_message, "messages_contacts"),
+    "send_message_by_phone": (messaging.handle_send_message_by_phone, "messages_only"),
+
+    # Contacts handlers
+    "add_contact": (contacts.handle_add_contact, "contacts_only"),
+    "list_contacts": (contacts.handle_list_contacts, "contacts_only"),
+
+    # Reading handlers
+    "get_recent_messages": (reading.handle_get_recent_messages, "messages_contacts"),
+    "get_all_recent_conversations": (reading.handle_get_all_recent_conversations, "messages_contacts"),
+    "search_messages": (reading.handle_search_messages, "messages_contacts"),
+    "get_messages_by_phone": (reading.handle_get_messages_by_phone, "messages_contacts"),
+    "get_attachments": (reading.handle_get_attachments, "messages_contacts"),
+    "get_unread_messages": (reading.handle_get_unread_messages, "messages_contacts"),
+    "get_message_thread": (reading.handle_get_message_thread, "messages_contacts"),
+    "extract_links": (reading.handle_extract_links, "messages_contacts"),
+    "get_voice_messages": (reading.handle_get_voice_messages, "messages_contacts"),
+    "get_scheduled_messages": (reading.handle_get_scheduled_messages, "messages_contacts"),
+    "list_recent_handles": (reading.handle_list_recent_handles, "messages_contacts"),
+    "search_unknown_senders": (reading.handle_search_unknown_senders, "messages_contacts"),
+
+    # Groups handlers
+    "list_group_chats": (groups.handle_list_group_chats, "messages_contacts"),
+    "get_group_messages": (groups.handle_get_group_messages, "messages_contacts"),
+
+    # RAG handlers
+    "index_messages": (rag.handle_index_messages, "rag"),
+    "ask_messages": (rag.handle_ask_messages, "rag"),
+    "rag_stats": (rag.handle_rag_stats, "rag"),
+    "index_knowledge": (rag.handle_index_knowledge, "rag"),
+    "search_knowledge": (rag.handle_search_knowledge, "rag"),
+    "knowledge_stats": (rag.handle_knowledge_stats, "rag"),
+    "migrate_rag_data": (rag.handle_migrate_rag_data, "rag"),
+
+    # Analytics handlers
+    "get_reactions": (analytics.handle_get_reactions, "messages_contacts"),
+    "get_conversation_analytics": (analytics.handle_get_conversation_analytics, "messages_contacts"),
+    "get_conversation_for_summary": (analytics.handle_get_conversation_for_summary, "messages_contacts"),
+    "detect_follow_up_needed": (analytics.handle_detect_follow_up_needed, "messages_contacts"),
+}
+
+
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     """
-    Handle MCP tool calls.
+    Handle MCP tool calls using the tool registry pattern.
 
     Args:
         name: Tool name
@@ -756,1959 +877,38 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     logger.info(f"Tool called: {name} with args: {arguments}")
 
     try:
-        if name == "send_message":
-            return await handle_send_message(arguments)
-        elif name == "get_recent_messages":
-            return await handle_get_recent_messages(arguments)
-        elif name == "list_contacts":
-            return await handle_list_contacts(arguments)
-        elif name == "get_all_recent_conversations":
-            return await handle_get_all_recent_conversations(arguments)
-        elif name == "search_messages":
-            return await handle_search_messages(arguments)
-        elif name == "get_messages_by_phone":
-            return await handle_get_messages_by_phone(arguments)
-        elif name == "list_group_chats":
-            return await handle_list_group_chats(arguments)
-        elif name == "get_group_messages":
-            return await handle_get_group_messages(arguments)
-        # RAG tools
-        elif name == "index_messages":
-            return await handle_index_messages(arguments)
-        elif name == "ask_messages":
-            return await handle_ask_messages(arguments)
-        elif name == "rag_stats":
-            return await handle_rag_stats(arguments)
-        # Unified RAG tools
-        elif name == "index_knowledge":
-            return await handle_index_knowledge(arguments)
-        elif name == "search_knowledge":
-            return await handle_search_knowledge(arguments)
-        elif name == "knowledge_stats":
-            return await handle_knowledge_stats(arguments)
-        # T0 features
-        elif name == "get_attachments":
-            return await handle_get_attachments(arguments)
-        elif name == "get_unread_messages":
-            return await handle_get_unread_messages(arguments)
-        elif name == "get_reactions":
-            return await handle_get_reactions(arguments)
-        elif name == "get_conversation_analytics":
-            return await handle_get_conversation_analytics(arguments)
-        # T1 features
-        elif name == "get_message_thread":
-            return await handle_get_message_thread(arguments)
-        elif name == "extract_links":
-            return await handle_extract_links(arguments)
-        elif name == "get_voice_messages":
-            return await handle_get_voice_messages(arguments)
-        elif name == "get_scheduled_messages":
-            return await handle_get_scheduled_messages(arguments)
-        # T2 features
-        elif name == "get_conversation_for_summary":
-            return await handle_get_conversation_for_summary(arguments)
-        elif name == "detect_follow_up_needed":
-            return await handle_detect_follow_up_needed(arguments)
-        else:
+        # Look up handler in registry
+        if name not in TOOL_REGISTRY:
             raise ValueError(f"Unknown tool: {name}")
+
+        handler, dep_type = TOOL_REGISTRY[name]
+
+        # Call handler with appropriate dependencies
+        if dep_type == "messages_contacts":
+            return await handler(arguments, messages, contacts_mgr)
+        elif dep_type == "messages_only":
+            return await handler(arguments, messages)
+        elif dep_type == "contacts_only":
+            return await handler(arguments, contacts_mgr)
+        elif dep_type == "rag":
+            return await handler(
+                arguments,
+                get_retriever,
+                get_unified_retriever,
+                messages,
+                contacts_mgr
+            )
+        else:
+            raise ValueError(f"Unknown dependency type: {dep_type}")
 
     except Exception as e:
         logger.error(f"Error executing tool {name}: {e}", exc_info=True)
-        return [
-            types.TextContent(
-                type="text",
-                text=f"Error: {str(e)}"
-            )
-        ]
+        return text_response(f"Error: {str(e)}")
 
 
-async def handle_send_message(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle send_message tool call.
-
-    Args:
-        arguments: {"contact_name": str, "message": str}
-
-    Returns:
-        Success or error message
-    """
-    # Validate contact_name
-    contact_name, error = validate_non_empty_string(arguments.get("contact_name"), "contact_name")
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-
-    # Validate message
-    message, error = validate_non_empty_string(arguments.get("message"), "message")
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-
-    # Look up contact
-    contact = contacts.get_contact_by_name(contact_name)
-    if not contact:
-        return [
-            types.TextContent(
-                type="text",
-                text=(
-                    f"Contact '{contact_name}' not found. "
-                    f"Please add to config/contacts.json or check spelling. "
-                    f"Available contacts: {', '.join(c.name for c in contacts.list_contacts())}"
-                )
-            )
-        ]
-
-    # Send message
-    result = messages.send_message(contact.phone, message)
-
-    if result["success"]:
-        response = (
-            f"✓ Message sent to {contact.name} ({contact.phone})\n\n"
-            f"Message: {message}"
-        )
-        logger.info(f"Message sent successfully to {contact.name}")
-
-        # TODO Sprint 2: Log interaction to Life Planner database
-    else:
-        response = (
-            f"✗ Failed to send message to {contact.name}\n\n"
-            f"Error: {result['error']}\n\n"
-            f"Troubleshooting:\n"
-            f"- Ensure Messages.app is running\n"
-            f"- Check AppleScript permissions in System Settings\n"
-            f"- Verify phone number format: {contact.phone}"
-        )
-        logger.error(f"Failed to send message: {result['error']}")
-
-    return [types.TextContent(type="text", text=response)]
-
-
-async def handle_get_recent_messages(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle get_recent_messages tool call.
-
-    Args:
-        arguments: {"contact_name": str, "limit": Optional[int]}
-
-    Returns:
-        Recent message history or error
-    """
-    # Validate contact_name
-    contact_name, error = validate_non_empty_string(arguments.get("contact_name"), "contact_name")
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-
-    # Validate limit
-    limit_raw = arguments.get("limit", 20)
-    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_MESSAGE_LIMIT)
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-    if limit is None:
-        limit = 20
-
-    # Look up contact
-    contact = contacts.get_contact_by_name(contact_name)
-    if not contact:
-        return [
-            types.TextContent(
-                type="text",
-                text=f"Contact '{contact_name}' not found"
-            )
-        ]
-
-    # Get messages
-    message_list = messages.get_recent_messages(contact.phone, limit)
-
-    if not message_list:
-        return [
-            types.TextContent(
-                type="text",
-                text=(
-                    f"No messages found for {contact.name}.\n\n"
-                    f"Note: Requires Full Disk Access permission.\n"
-                    f"Grant in: System Settings → Privacy & Security → Full Disk Access"
-                )
-            )
-        ]
-
-    # Format response
-    response_lines = [
-        f"Recent messages with {contact.name} ({contact.phone}):",
-        f"(Showing {len(message_list)} most recent)",
-        ""
-    ]
-
-    for msg in message_list:
-        direction = "You" if msg["is_from_me"] else contact.name
-        date = msg["date"][:19] if msg["date"] else "Unknown date"
-        text = msg["text"][:100] + "..." if len(msg["text"]) > 100 else msg["text"]
-
-        response_lines.append(f"[{date}] {direction}: {text}")
-
-    return [
-        types.TextContent(
-            type="text",
-            text="\n".join(response_lines)
-        )
-    ]
-
-
-async def handle_list_contacts(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle list_contacts tool call.
-
-    Returns:
-        List of all configured contacts
-    """
-    contact_list = contacts.list_contacts()
-
-    if not contact_list:
-        return [
-            types.TextContent(
-                type="text",
-                text=(
-                    "No contacts configured.\n\n"
-                    "Add contacts to: config/contacts.json\n"
-                    "Sprint 2 will add auto-sync from macOS Contacts."
-                )
-            )
-        ]
-
-    response_lines = [
-        f"Configured Contacts ({len(contact_list)}):",
-        ""
-    ]
-
-    for contact in contact_list:
-        response_lines.append(
-            f"• {contact.name} - {contact.phone} ({contact.relationship_type})"
-        )
-        if contact.notes:
-            response_lines.append(f"  Note: {contact.notes}")
-
-    return [
-        types.TextContent(
-            type="text",
-            text="\n".join(response_lines)
-        )
-    ]
-
-
-async def handle_get_all_recent_conversations(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle get_all_recent_conversations tool call (Sprint 2.5).
-
-    Args:
-        arguments: {"limit": Optional[int]}
-
-    Returns:
-        Recent messages from all conversations
-    """
-    # Validate limit
-    limit_raw = arguments.get("limit", 20)
-    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_MESSAGE_LIMIT)
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-    if limit is None:
-        limit = 20
-
-    # Get all recent messages
-    message_list = messages.get_all_recent_conversations(limit)
-
-    if not message_list:
-        return [
-            types.TextContent(
-                type="text",
-                text=(
-                    "No messages found.\n\n"
-                    "Note: Requires Full Disk Access permission.\n"
-                    "Grant in: System Settings → Privacy & Security → Full Disk Access"
-                )
-            )
-        ]
-
-    # Format response
-    response_lines = [
-        f"Recent Messages (All Conversations):",
-        f"(Showing {len(message_list)} most recent)",
-        ""
-    ]
-
-    for msg in message_list:
-        # Check if this is a group chat
-        is_group = msg.get("is_group_chat", False)
-
-        if is_group:
-            # For group chats, show sender and group indicator
-            sender_handle = msg.get("sender_handle", msg["phone"])
-            if msg["is_from_me"]:
-                sender_name = "You"
-            else:
-                sender_contact = contacts.get_contact_by_phone(sender_handle)
-                sender_name = sender_contact.name if sender_contact else sender_handle[:15]
-
-            direction = f"[GROUP] {sender_name}"
-        else:
-            # For 1:1 chats, use existing logic
-            phone = msg["phone"]
-            contact = contacts.get_contact_by_phone(phone)
-            contact_name = contact.name if contact else phone
-            direction = "You" if msg["is_from_me"] else contact_name
-
-        date = msg["date"][:19] if msg["date"] else "Unknown date"
-        text = msg["text"][:80] + "..." if len(msg["text"]) > 80 else msg["text"]
-
-        response_lines.append(f"[{date}] {direction}: {text}")
-
-    return [
-        types.TextContent(
-            type="text",
-            text="\n".join(response_lines)
-        )
-    ]
-
-
-async def handle_search_messages(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle search_messages tool call (Sprint 2.5).
-
-    Args:
-        arguments: {"query": str, "contact_name": Optional[str], "limit": Optional[int]}
-
-    Returns:
-        Messages matching search query
-    """
-    # Validate query
-    query, error = validate_non_empty_string(arguments.get("query"), "query")
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-
-    contact_name = arguments.get("contact_name")
-
-    # Validate limit
-    limit_raw = arguments.get("limit", 50)
-    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_SEARCH_RESULTS)
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-    if limit is None:
-        limit = 50
-
-    # If contact_name provided, look up phone
-    phone_filter = None
-    if contact_name:
-        contact = contacts.get_contact_by_name(contact_name)
-        if not contact:
-            return [
-                types.TextContent(
-                    type="text",
-                    text=f"Contact '{contact_name}' not found"
-                )
-            ]
-        phone_filter = contact.phone
-
-    # Search messages
-    message_list = messages.search_messages(query, phone=phone_filter, limit=limit)
-
-    if not message_list:
-        filter_text = f" with {contact_name}" if contact_name else ""
-        return [
-            types.TextContent(
-                type="text",
-                text=f"No messages found matching '{query}'{filter_text}"
-            )
-        ]
-
-    # Format response
-    filter_text = f" with {contact_name}" if contact_name else " (all conversations)"
-    response_lines = [
-        f"Search Results for '{query}'{filter_text}:",
-        f"(Found {len(message_list)} matches)",
-        ""
-    ]
-
-    for msg in message_list:
-        # Check if this is a group chat
-        is_group = msg.get("is_group_chat", False)
-
-        if is_group:
-            # For group chats, show sender and group indicator
-            phone = msg["phone"]
-            if msg["is_from_me"]:
-                sender_name = "You"
-            else:
-                sender_contact = contacts.get_contact_by_phone(phone)
-                sender_name = sender_contact.name if sender_contact else phone[:15]
-            direction = f"[GROUP] {sender_name}"
-        else:
-            # For 1:1 chats, use existing logic
-            phone = msg["phone"]
-            contact = contacts.get_contact_by_phone(phone)
-            contact_name_display = contact.name if contact else phone
-            direction = "You" if msg["is_from_me"] else contact_name_display
-
-        date = msg["date"][:10] if msg["date"] else "Unknown"
-        snippet = msg.get("match_snippet", msg["text"][:100])
-
-        response_lines.append(f"[{date}] {direction}: {snippet}")
-        response_lines.append("")  # Blank line between results
-
-    return [
-        types.TextContent(
-            type="text",
-            text="\n".join(response_lines)
-        )
-    ]
-
-
-async def handle_get_messages_by_phone(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle get_messages_by_phone tool call (Sprint 2.5).
-
-    Args:
-        arguments: {"phone_number": str, "limit": Optional[int]}
-
-    Returns:
-        Recent messages with this phone number
-    """
-    # Validate phone_number
-    phone_number, error = validate_non_empty_string(arguments.get("phone_number"), "phone_number")
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-
-    # Validate limit
-    limit_raw = arguments.get("limit", 20)
-    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_MESSAGE_LIMIT)
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-    if limit is None:
-        limit = 20
-
-    # Get messages
-    message_list = messages.get_recent_messages(phone_number, limit)
-
-    if not message_list:
-        return [
-            types.TextContent(
-                type="text",
-                text=(
-                    f"No messages found for {phone_number}.\n\n"
-                    "Note: Requires Full Disk Access permission.\n"
-                    "Grant in: System Settings → Privacy & Security → Full Disk Access"
-                )
-            )
-        ]
-
-    # Try to find contact name
-    contact = contacts.get_contact_by_phone(phone_number)
-    contact_name = contact.name if contact else "Unknown Contact"
-
-    # Format response
-    response_lines = [
-        f"Recent messages with {phone_number}",
-        f"({contact_name})" if contact else "(Not in contacts)",
-        f"(Showing {len(message_list)} most recent)",
-        ""
-    ]
-
-    for msg in message_list:
-        direction = "You" if msg["is_from_me"] else contact_name
-        date = msg["date"][:19] if msg["date"] else "Unknown date"
-        text = msg["text"][:100] + "..." if len(msg["text"]) > 100 else msg["text"]
-
-        response_lines.append(f"[{date}] {direction}: {text}")
-
-    return [
-        types.TextContent(
-            type="text",
-            text="\n".join(response_lines)
-        )
-    ]
-
-
-async def handle_list_group_chats(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle list_group_chats tool call (Sprint 3).
-
-    Args:
-        arguments: {"limit": Optional[int]}
-
-    Returns:
-        List of group conversations with participant info
-    """
-    # Validate limit
-    limit_raw = arguments.get("limit", 50)
-    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_MESSAGE_LIMIT)
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-    if limit is None:
-        limit = 50
-
-    # Get group chats
-    group_list = messages.list_group_chats(limit)
-
-    if not group_list:
-        return [
-            types.TextContent(
-                type="text",
-                text=(
-                    "No group chats found.\n\n"
-                    "Note: Requires Full Disk Access permission.\n"
-                    "Grant in: System Settings → Privacy & Security → Full Disk Access"
-                )
-            )
-        ]
-
-    # Format response
-    response_lines = [
-        f"Group Chats ({len(group_list)} found):",
-        ""
-    ]
-
-    for group in group_list:
-        # Resolve participant names where possible
-        participant_names = []
-        for handle in group["participants"]:
-            contact = contacts.get_contact_by_phone(handle)
-            if contact:
-                participant_names.append(contact.name)
-            else:
-                # Truncate long handles for display
-                display_handle = handle[:20] + "..." if len(handle) > 20 else handle
-                participant_names.append(display_handle)
-
-        participants_str = ", ".join(participant_names[:5])  # Limit to 5 names
-        if len(participant_names) > 5:
-            participants_str += f" +{len(participant_names) - 5} more"
-
-        date = group["last_message_date"][:10] if group["last_message_date"] else "Unknown"
-        msg_count = group["message_count"]
-        display_name = group.get("display_name") or "Unnamed Group"
-
-        response_lines.append(f"📱 {display_name} ({group['participant_count']} people)")
-        response_lines.append(f"   Participants: {participants_str}")
-        response_lines.append(f"   Last active: {date} | {msg_count} messages")
-        response_lines.append(f"   Group ID: {group['group_id']}")
-        response_lines.append("")
-
-    response_lines.append("Use get_group_messages with group_id to read messages from a specific group.")
-
-    return [
-        types.TextContent(
-            type="text",
-            text="\n".join(response_lines)
-        )
-    ]
-
-
-async def handle_index_messages(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle index_messages tool call (RAG Sprint 4).
-
-    Indexes messages for semantic search.
-
-    Args:
-        arguments: {"contact_name": Optional[str], "days": Optional[int], "all_history": Optional[bool]}
-
-    Returns:
-        Status message about indexing
-    """
-    contact_name = arguments.get("contact_name")
-    all_history = arguments.get("all_history", False)
-
-    # Validate days (allow up to 1460 = 4 years)
-    days_raw = arguments.get("days", 30)
-    days, error = validate_positive_int(days_raw, "days", min_val=1, max_val=1460)
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-    if days is None:
-        days = 30
-
-    try:
-        retriever = get_retriever()
-
-        # Full history indexing
-        if all_history and not contact_name:
-            chunks_added = retriever.index_all_history()
-
-            stats = retriever.get_stats()
-            contacts_indexed = stats.get("contacts", [])
-
-            return [
-                types.TextContent(
-                    type="text",
-                    text=(
-                        f"✓ Indexed COMPLETE message history\n\n"
-                        f"• {chunks_added} new conversation chunks created\n"
-                        f"• Total chunks: {stats.get('chunk_count', 0)}\n"
-                        f"• Contacts indexed: {len(contacts_indexed)}\n"
-                        f"• Date range: ALL TIME\n\n"
-                        f"You can now use ask_messages to search these conversations."
-                    )
-                )
-            ]
-
-        if contact_name:
-            # Index specific contact
-            contact = contacts.get_contact_by_name(contact_name)
-            if not contact:
-                return [
-                    types.TextContent(
-                        type="text",
-                        text=(
-                            f"Contact '{contact_name}' not found. "
-                            f"Available contacts: {', '.join(c.name for c in contacts.list_contacts()[:5])}..."
-                        )
-                    )
-                ]
-
-            chunks_added = retriever.index_contact(contact.name, days=days)
-
-            return [
-                types.TextContent(
-                    type="text",
-                    text=(
-                        f"✓ Indexed messages with {contact.name}\n\n"
-                        f"• {chunks_added} conversation chunks created\n"
-                        f"• Date range: last {days} days\n\n"
-                        f"You can now use ask_messages to search these conversations."
-                    )
-                )
-            ]
-        else:
-            # Index all recent messages
-            chunks_added = retriever.index_recent_messages(days=days)
-
-            stats = retriever.get_stats()
-            contacts_indexed = stats.get("contacts", [])
-
-            return [
-                types.TextContent(
-                    type="text",
-                    text=(
-                        f"✓ Indexed recent messages\n\n"
-                        f"• {chunks_added} new conversation chunks created\n"
-                        f"• Total chunks: {stats.get('chunk_count', 0)}\n"
-                        f"• Contacts indexed: {len(contacts_indexed)}\n"
-                        f"• Date range: last {days} days\n\n"
-                        f"You can now use ask_messages to search these conversations."
-                    )
-                )
-            ]
-
-    except ImportError as e:
-        return [
-            types.TextContent(
-                type="text",
-                text=(
-                    f"RAG dependencies not installed.\n\n"
-                    f"Run: pip install chromadb openai\n\n"
-                    f"Error: {e}"
-                )
-            )
-        ]
-    except ValueError as e:
-        return [
-            types.TextContent(
-                type="text",
-                text=(
-                    f"Configuration error: {e}\n\n"
-                    f"Make sure OPENAI_API_KEY environment variable is set, "
-                    f"or configure local embeddings."
-                )
-            )
-        ]
-    except Exception as e:
-        logger.error(f"Error indexing messages: {e}", exc_info=True)
-        return [
-            types.TextContent(
-                type="text",
-                text=f"Error indexing messages: {e}"
-            )
-        ]
-
-
-async def handle_ask_messages(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle ask_messages tool call (RAG Sprint 4).
-
-    Semantic search across indexed conversations.
-
-    Args:
-        arguments: {"question": str, "contact_name": Optional[str], "limit": Optional[int]}
-
-    Returns:
-        Relevant conversation context
-    """
-    # Validate question
-    question, error = validate_non_empty_string(arguments.get("question"), "question")
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-
-    contact_name = arguments.get("contact_name")
-
-    # Validate limit
-    limit_raw = arguments.get("limit", 5)
-    limit, error = validate_positive_int(limit_raw, "limit", min_val=1, max_val=20)
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-    if limit is None:
-        limit = 5
-
-    try:
-        retriever = get_retriever()
-
-        # Check if index is empty
-        stats = retriever.get_stats()
-        if stats.get("chunk_count", 0) == 0:
-            return [
-                types.TextContent(
-                    type="text",
-                    text=(
-                        "No messages have been indexed yet.\n\n"
-                        "Run index_messages first to create the search index:\n"
-                        "• index_messages with days=30 (indexes all recent messages)\n"
-                        "• index_messages with contact_name=\"John\" (indexes specific contact)"
-                    )
-                )
-            ]
-
-        # Perform semantic search
-        context, results = retriever.ask(
-            question=question,
-            limit=limit,
-            contact=contact_name,
-        )
-
-        if not results:
-            filter_text = f" with {contact_name}" if contact_name else ""
-            return [
-                types.TextContent(
-                    type="text",
-                    text=f"No relevant conversations found{filter_text} for: \"{question}\""
-                )
-            ]
-
-        return [
-            types.TextContent(
-                type="text",
-                text=context
-            )
-        ]
-
-    except ImportError as e:
-        return [
-            types.TextContent(
-                type="text",
-                text=(
-                    f"RAG dependencies not installed.\n\n"
-                    f"Run: pip install chromadb openai\n\n"
-                    f"Error: {e}"
-                )
-            )
-        ]
-    except Exception as e:
-        logger.error(f"Error searching messages: {e}", exc_info=True)
-        return [
-            types.TextContent(
-                type="text",
-                text=f"Error searching messages: {e}"
-            )
-        ]
-
-
-async def handle_rag_stats(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle rag_stats tool call (RAG Sprint 4).
-
-    Returns statistics about the indexed message database.
-
-    Args:
-        arguments: {} (no arguments needed)
-
-    Returns:
-        Statistics about indexed data
-    """
-    try:
-        retriever = get_retriever()
-        stats = retriever.get_stats()
-
-        if stats.get("chunk_count", 0) == 0:
-            return [
-                types.TextContent(
-                    type="text",
-                    text=(
-                        "📊 iMessage RAG Statistics\n\n"
-                        "No messages indexed yet.\n\n"
-                        "Run index_messages to start building the search index."
-                    )
-                )
-            ]
-
-        contacts_list = stats.get("contacts", [])
-        contacts_display = ", ".join(contacts_list[:10])
-        if len(contacts_list) > 10:
-            contacts_display += f" +{len(contacts_list) - 10} more"
-
-        return [
-            types.TextContent(
-                type="text",
-                text=(
-                    f"📊 iMessage RAG Statistics\n\n"
-                    f"• Indexed chunks: {stats.get('chunk_count', 0)}\n"
-                    f"• Contacts: {stats.get('contact_count', 0)}\n"
-                    f"• Oldest message: {stats.get('oldest_chunk', 'N/A')[:10] if stats.get('oldest_chunk') else 'N/A'}\n"
-                    f"• Newest message: {stats.get('newest_chunk', 'N/A')[:10] if stats.get('newest_chunk') else 'N/A'}\n"
-                    f"• Storage: {stats.get('persist_directory', 'N/A')}\n\n"
-                    f"Contacts indexed:\n{contacts_display}"
-                )
-            )
-        ]
-
-    except ImportError as e:
-        return [
-            types.TextContent(
-                type="text",
-                text=(
-                    f"RAG dependencies not installed.\n\n"
-                    f"Run: pip install chromadb openai\n\n"
-                    f"Error: {e}"
-                )
-            )
-        ]
-    except Exception as e:
-        logger.error(f"Error getting RAG stats: {e}", exc_info=True)
-        return [
-            types.TextContent(
-                type="text",
-                text=f"Error getting RAG stats: {e}"
-            )
-        ]
-
-
-async def handle_get_group_messages(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle get_group_messages tool call (Sprint 3).
-
-    Args:
-        arguments: {"group_id": Optional[str], "participant": Optional[str], "limit": Optional[int]}
-
-    Returns:
-        Messages from the specified group chat
-    """
-    group_id = arguments.get("group_id")
-    participant = arguments.get("participant")
-
-    # Validate limit
-    limit_raw = arguments.get("limit", 50)
-    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_MESSAGE_LIMIT)
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-    if limit is None:
-        limit = 50
-
-    # Validate that at least one of group_id or participant is provided
-    if not group_id and not participant:
-        return [
-            types.TextContent(
-                type="text",
-                text=(
-                    "Error: Either group_id or participant must be provided.\n\n"
-                    "Use list_group_chats first to find group IDs, or provide a "
-                    "participant phone/email to find groups containing that person."
-                )
-            )
-        ]
-
-    # Get group messages
-    message_list = messages.get_group_messages(
-        group_id=group_id,
-        participant_filter=participant,
-        limit=limit
-    )
-
-    if not message_list:
-        filter_type = f"group_id={group_id}" if group_id else f"participant={participant}"
-        return [
-            types.TextContent(
-                type="text",
-                text=(
-                    f"No group messages found for {filter_type}.\n\n"
-                    "Note: Requires Full Disk Access permission.\n"
-                    "Grant in: System Settings → Privacy & Security → Full Disk Access"
-                )
-            )
-        ]
-
-    # Get participant info from first message
-    first_msg = message_list[0]
-    group_participants = first_msg.get("group_participants", [])
-    display_name = first_msg.get("display_name") or "Unnamed Group"
-
-    # Resolve participant names
-    participant_names = []
-    for handle in group_participants:
-        contact = contacts.get_contact_by_phone(handle)
-        if contact:
-            participant_names.append(contact.name)
-        else:
-            display_handle = handle[:15] + "..." if len(handle) > 15 else handle
-            participant_names.append(display_handle)
-
-    participants_str = ", ".join(participant_names[:5])
-    if len(participant_names) > 5:
-        participants_str += f" +{len(participant_names) - 5} more"
-
-    # Format response
-    response_lines = [
-        f"📱 {display_name} ({len(message_list)} messages)",
-        f"Participants: {participants_str}",
-        ""
-    ]
-
-    for msg in message_list:
-        # Resolve sender name
-        sender_handle = msg.get("sender_handle", "unknown")
-        if msg["is_from_me"]:
-            sender_name = "You"
-        else:
-            sender_contact = contacts.get_contact_by_phone(sender_handle)
-            sender_name = sender_contact.name if sender_contact else sender_handle[:15]
-
-        date = msg["date"][:19] if msg["date"] else "Unknown date"
-        text = msg["text"][:100] + "..." if len(msg["text"]) > 100 else msg["text"]
-
-        response_lines.append(f"[{date}] {sender_name}: {text}")
-
-    return [
-        types.TextContent(
-            type="text",
-            text="\n".join(response_lines)
-        )
-    ]
-
-
-# ============================================================================
-# Unified RAG Handlers (Multi-Source Knowledge Base)
-# ============================================================================
-
-
-async def handle_index_knowledge(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle index_knowledge tool call for unified multi-source RAG.
-    """
-    source = arguments.get("source", "").lower()
-    days = arguments.get("days", 30)
-    limit = arguments.get("limit")
-
-    if not source:
-        return [
-            types.TextContent(
-                type="text",
-                text="Error: 'source' is required. Options: superwhisper, notes, local, gmail, slack, calendar"
-            )
-        ]
-
-    # Validate days
-    if days:
-        validated, error = validate_positive_int(days, "days", min_val=1, max_val=1460)
-        if error:
-            return [types.TextContent(type="text", text=f"Error: {error}")]
-        days = validated
-
-    # Validate limit
-    if limit:
-        validated, error = validate_positive_int(limit, "limit", min_val=1, max_val=10000)
-        if error:
-            return [types.TextContent(type="text", text=f"Error: {error}")]
-        limit = validated
-
-    try:
-        retriever = get_unified_retriever()
-
-        if source == "superwhisper":
-            result = retriever.index_superwhisper(days=days, limit=limit)
-            return [
-                types.TextContent(
-                    type="text",
-                    text=(
-                        f"SuperWhisper indexing complete!\n"
-                        f"- Transcriptions found: {result.get('chunks_found', 0)}\n"
-                        f"- Transcriptions indexed: {result.get('chunks_indexed', 0)}\n"
-                        f"- Duration: {result.get('duration_seconds', 0):.1f}s\n\n"
-                        f"Use search_knowledge to search your voice transcriptions."
-                    )
-                )
-            ]
-
-        elif source == "notes":
-            result = retriever.index_notes(days=days, limit=limit)
-            return [
-                types.TextContent(
-                    type="text",
-                    text=(
-                        f"Notes indexing complete!\n"
-                        f"- Document sections found: {result.get('chunks_found', 0)}\n"
-                        f"- Sections indexed: {result.get('chunks_indexed', 0)}\n"
-                        f"- Duration: {result.get('duration_seconds', 0):.1f}s\n\n"
-                        f"Use search_knowledge to search your notes."
-                    )
-                )
-            ]
-
-        elif source == "local":
-            result = retriever.index_local_sources(days=days)
-            by_source = result.get("by_source", {})
-            return [
-                types.TextContent(
-                    type="text",
-                    text=(
-                        f"Local sources indexing complete!\n\n"
-                        f"SuperWhisper:\n"
-                        f"  - Found: {by_source.get('superwhisper', {}).get('chunks_found', 0)}\n"
-                        f"  - Indexed: {by_source.get('superwhisper', {}).get('chunks_indexed', 0)}\n\n"
-                        f"Notes:\n"
-                        f"  - Found: {by_source.get('notes', {}).get('chunks_found', 0)}\n"
-                        f"  - Indexed: {by_source.get('notes', {}).get('chunks_indexed', 0)}\n\n"
-                        f"Total chunks indexed: {result.get('total_chunks_indexed', 0)}\n\n"
-                        f"Use search_knowledge to search across all sources."
-                    )
-                )
-            ]
-
-        elif source in ("gmail", "slack", "calendar"):
-            return [
-                types.TextContent(
-                    type="text",
-                    text=(
-                        f"Indexing {source} requires pre-fetched data.\n\n"
-                        f"For {source}, first fetch data using the appropriate MCP tools, "
-                        f"then pass the data to the indexer programmatically.\n\n"
-                        f"For local sources (superwhisper, notes), use index_knowledge directly."
-                    )
-                )
-            ]
-
-        else:
-            return [
-                types.TextContent(
-                    type="text",
-                    text=f"Unknown source: {source}. Options: superwhisper, notes, local, gmail, slack, calendar"
-                )
-            ]
-
-    except ImportError as e:
-        return [
-            types.TextContent(
-                type="text",
-                text=f"Error: RAG dependencies not installed. {str(e)}"
-            )
-        ]
-    except Exception as e:
-        logger.error(f"Error in index_knowledge: {e}", exc_info=True)
-        return [
-            types.TextContent(
-                type="text",
-                text=f"Error indexing {source}: {str(e)}"
-            )
-        ]
-
-
-async def handle_search_knowledge(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle search_knowledge tool call for unified semantic search.
-    """
-    query = arguments.get("query", "").strip()
-    sources = arguments.get("sources")
-    days = arguments.get("days")
-    limit = arguments.get("limit", 10)
-
-    if not query:
-        return [
-            types.TextContent(
-                type="text",
-                text="Error: 'query' is required."
-            )
-        ]
-
-    # Validate limit
-    if limit:
-        validated, error = validate_positive_int(limit, "limit", min_val=1, max_val=50)
-        if error:
-            return [types.TextContent(type="text", text=f"Error: {error}")]
-        limit = validated
-
-    # Validate days
-    if days:
-        validated, error = validate_positive_int(days, "days", min_val=1, max_val=1460)
-        if error:
-            return [types.TextContent(type="text", text=f"Error: {error}")]
-        days = validated
-
-    try:
-        retriever = get_unified_retriever()
-
-        # Check if anything is indexed
-        stats = retriever.get_stats()
-        if stats.get("total_chunks", 0) == 0:
-            return [
-                types.TextContent(
-                    type="text",
-                    text=(
-                        "No content has been indexed yet.\n\n"
-                        "Run index_knowledge first to build the search index:\n"
-                        "• index_knowledge with source='superwhisper' (voice transcriptions)\n"
-                        "• index_knowledge with source='notes' (markdown documents)\n"
-                        "• index_knowledge with source='local' (both)"
-                    )
-                )
-            ]
-
-        # Perform search
-        context = retriever.ask(
-            question=query,
-            sources=sources,
-            limit=limit,
-            days=days,
-        )
-
-        return [
-            types.TextContent(
-                type="text",
-                text=context
-            )
-        ]
-
-    except ImportError as e:
-        return [
-            types.TextContent(
-                type="text",
-                text=f"Error: RAG dependencies not installed. {str(e)}"
-            )
-        ]
-    except Exception as e:
-        logger.error(f"Error in search_knowledge: {e}", exc_info=True)
-        return [
-            types.TextContent(
-                type="text",
-                text=f"Error searching: {str(e)}"
-            )
-        ]
-
-
-async def handle_knowledge_stats(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle knowledge_stats tool call.
-    """
-    source = arguments.get("source")
-
-    try:
-        retriever = get_unified_retriever()
-        stats = retriever.get_stats(source=source)
-
-        if stats.get("total_chunks", 0) == 0:
-            return [
-                types.TextContent(
-                    type="text",
-                    text=(
-                        "Knowledge base is empty.\n\n"
-                        "Run index_knowledge to start building the search index:\n"
-                        "• index_knowledge with source='superwhisper'\n"
-                        "• index_knowledge with source='notes'\n"
-                        "• index_knowledge with source='local' (both)"
-                    )
-                )
-            ]
-
-        # Format stats
-        lines = [
-            "Knowledge Base Statistics",
-            "=" * 40,
-            f"Total chunks indexed: {stats.get('total_chunks', 0)}",
-            f"Unique participants: {stats.get('unique_participants', 0)}",
-            f"Unique tags: {stats.get('unique_tags', 0)}",
-            "",
-            "By Source:",
-        ]
-
-        by_source = stats.get("by_source", {})
-        for src, info in sorted(by_source.items()):
-            count = info.get("chunk_count", 0)
-            if count > 0:
-                oldest = info.get("oldest", "N/A")
-                newest = info.get("newest", "N/A")
-                lines.append(f"  {src}: {count} chunks")
-                lines.append(f"    Range: {oldest[:10] if oldest else 'N/A'} to {newest[:10] if newest else 'N/A'}")
-
-        if stats.get("oldest_chunk") and stats.get("newest_chunk"):
-            lines.append("")
-            lines.append(f"Overall date range: {stats['oldest_chunk'][:10]} to {stats['newest_chunk'][:10]}")
-
-        return [
-            types.TextContent(
-                type="text",
-                text="\n".join(lines)
-            )
-        ]
-
-    except ImportError as e:
-        return [
-            types.TextContent(
-                type="text",
-                text=f"Error: RAG dependencies not installed. {str(e)}"
-            )
-        ]
-    except Exception as e:
-        logger.error(f"Error in knowledge_stats: {e}", exc_info=True)
-        return [
-            types.TextContent(
-                type="text",
-                text=f"Error getting stats: {str(e)}"
-            )
-        ]
-
-
-# ============================================================================
-# T0 and T1 Feature Handlers
-# ============================================================================
-
-
-async def handle_get_attachments(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle get_attachments tool call (T0 Feature).
-
-    Args:
-        arguments: {"contact_name": Optional[str], "mime_type": Optional[str], "limit": Optional[int]}
-
-    Returns:
-        List of attachments with file paths and metadata
-    """
-    contact_name = arguments.get("contact_name")
-    mime_type_filter = arguments.get("mime_type")
-
-    # Validate limit
-    limit_raw = arguments.get("limit", 50)
-    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_MESSAGE_LIMIT)
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-    if limit is None:
-        limit = 50
-
-    # If contact_name provided, look up phone
-    phone_filter = None
-    if contact_name:
-        contact = contacts.get_contact_by_name(contact_name)
-        if not contact:
-            return [
-                types.TextContent(
-                    type="text",
-                    text=f"Contact '{contact_name}' not found"
-                )
-            ]
-        phone_filter = contact.phone
-
-    # Get attachments
-    attachment_list = messages.get_attachments(
-        phone=phone_filter,
-        mime_type_filter=mime_type_filter,
-        limit=limit
-    )
-
-    if not attachment_list:
-        filter_text = ""
-        if contact_name:
-            filter_text += f" from {contact_name}"
-        if mime_type_filter:
-            filter_text += f" of type {mime_type_filter}"
-        return [
-            types.TextContent(
-                type="text",
-                text=f"No attachments found{filter_text}."
-            )
-        ]
-
-    # Format response
-    filter_text = ""
-    if contact_name:
-        filter_text = f" from {contact_name}"
-    if mime_type_filter:
-        filter_text += f" (type: {mime_type_filter})"
-
-    response_lines = [
-        f"Attachments{filter_text} ({len(attachment_list)} found):",
-        ""
-    ]
-
-    for att in attachment_list:
-        sender = att.get("sender_handle", "unknown")
-        if att.get("is_from_me"):
-            sender = "You"
-        else:
-            contact = contacts.get_contact_by_phone(sender)
-            if contact:
-                sender = contact.name
-
-        date = att["message_date"][:10] if att["message_date"] else "Unknown"
-        size_kb = (att.get("total_bytes", 0) or 0) / 1024
-        filename = att.get("transfer_name") or Path(att.get("filename", "")).name or "unknown"
-        mime = att.get("mime_type", "unknown")
-
-        response_lines.append(f"📎 {filename}")
-        response_lines.append(f"   Type: {mime} | Size: {size_kb:.1f} KB")
-        response_lines.append(f"   From: {sender} | Date: {date}")
-        if att.get("filename"):
-            response_lines.append(f"   Path: {att['filename']}")
-        response_lines.append("")
-
-    return [types.TextContent(type="text", text="\n".join(response_lines))]
-
-
-async def handle_get_unread_messages(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle get_unread_messages tool call (T0 Feature).
-
-    Args:
-        arguments: {"limit": Optional[int]}
-
-    Returns:
-        List of unread messages awaiting response
-    """
-    # Validate limit
-    limit_raw = arguments.get("limit", 50)
-    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_MESSAGE_LIMIT)
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-    if limit is None:
-        limit = 50
-
-    # Get unread messages
-    unread_list = messages.get_unread_messages(limit=limit)
-
-    if not unread_list:
-        return [
-            types.TextContent(
-                type="text",
-                text="✓ No unread messages! You're all caught up."
-            )
-        ]
-
-    # Format response
-    response_lines = [
-        f"📬 Unread Messages ({len(unread_list)} awaiting response):",
-        ""
-    ]
-
-    for msg in unread_list:
-        phone = msg.get("phone", "unknown")
-        contact = contacts.get_contact_by_phone(phone)
-        sender = contact.name if contact else phone[:20]
-
-        date = msg["date"][:10] if msg["date"] else "Unknown"
-        days = msg.get("days_old", 0)
-        age_text = f"{days}d ago" if days > 0 else "today"
-
-        is_group = msg.get("is_group_chat", False)
-        group_indicator = "[GROUP] " if is_group else ""
-        group_name = msg.get("group_name", "")
-        if is_group and group_name:
-            sender = f"{sender} in {group_name}"
-
-        text = msg["text"][:80] + "..." if len(msg["text"]) > 80 else msg["text"]
-
-        response_lines.append(f"• {group_indicator}{sender} ({age_text})")
-        response_lines.append(f"  \"{text}\"")
-        response_lines.append("")
-
-    return [types.TextContent(type="text", text="\n".join(response_lines))]
-
-
-async def handle_get_reactions(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle get_reactions tool call (T0 Feature).
-
-    Args:
-        arguments: {"contact_name": Optional[str], "limit": Optional[int]}
-
-    Returns:
-        List of reactions/tapbacks with context
-    """
-    contact_name = arguments.get("contact_name")
-
-    # Validate limit
-    limit_raw = arguments.get("limit", 100)
-    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_SEARCH_RESULTS)
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-    if limit is None:
-        limit = 100
-
-    # If contact_name provided, look up phone
-    phone_filter = None
-    if contact_name:
-        contact = contacts.get_contact_by_name(contact_name)
-        if not contact:
-            return [
-                types.TextContent(
-                    type="text",
-                    text=f"Contact '{contact_name}' not found"
-                )
-            ]
-        phone_filter = contact.phone
-
-    # Get reactions
-    reaction_list = messages.get_reactions(phone=phone_filter, limit=limit)
-
-    if not reaction_list:
-        filter_text = f" with {contact_name}" if contact_name else ""
-        return [
-            types.TextContent(
-                type="text",
-                text=f"No reactions found{filter_text}."
-            )
-        ]
-
-    # Emoji mappings for reactions
-    reaction_emojis = {
-        "love": "❤️",
-        "like": "👍",
-        "dislike": "👎",
-        "laugh": "😂",
-        "emphasis": "‼️",
-        "question": "❓",
-    }
-
-    # Format response
-    filter_text = f" with {contact_name}" if contact_name else ""
-    response_lines = [
-        f"Reactions{filter_text} ({len(reaction_list)} found):",
-        ""
-    ]
-
-    for r in reaction_list:
-        reactor = r.get("reactor_handle", "unknown")
-        if r.get("is_from_me"):
-            reactor = "You"
-        else:
-            contact = contacts.get_contact_by_phone(reactor)
-            if contact:
-                reactor = contact.name
-
-        reaction_type = r.get("reaction_type", "unknown")
-        emoji = reaction_emojis.get(reaction_type, "🔹")
-        removal = " (removed)" if r.get("is_removal") else ""
-
-        date = r["date"][:10] if r["date"] else "Unknown"
-        preview = r.get("original_message_preview", "[message]")[:50]
-
-        response_lines.append(f"{emoji} {reactor} {reaction_type}d{removal}")
-        response_lines.append(f"   \"{preview}...\" ({date})")
-        response_lines.append("")
-
-    return [types.TextContent(type="text", text="\n".join(response_lines))]
-
-
-async def handle_get_conversation_analytics(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle get_conversation_analytics tool call (T0 Feature).
-
-    Args:
-        arguments: {"contact_name": Optional[str], "days": Optional[int]}
-
-    Returns:
-        Analytics about messaging patterns
-    """
-    contact_name = arguments.get("contact_name")
-
-    # Validate days
-    days_raw = arguments.get("days", 30)
-    days, error = validate_positive_int(days_raw, "days", min_val=1, max_val=365)
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-    if days is None:
-        days = 30
-
-    # If contact_name provided, look up phone
-    phone_filter = None
-    if contact_name:
-        contact = contacts.get_contact_by_name(contact_name)
-        if not contact:
-            return [
-                types.TextContent(
-                    type="text",
-                    text=f"Contact '{contact_name}' not found"
-                )
-            ]
-        phone_filter = contact.phone
-
-    # Get analytics
-    analytics = messages.get_conversation_analytics(phone=phone_filter, days=days)
-
-    if not analytics or analytics.get("total_messages", 0) == 0:
-        filter_text = f" with {contact_name}" if contact_name else ""
-        return [
-            types.TextContent(
-                type="text",
-                text=f"No message data found{filter_text} in the last {days} days."
-            )
-        ]
-
-    # Format response
-    filter_text = f" with {contact_name}" if contact_name else " (All Conversations)"
-    response_lines = [
-        f"📊 Messaging Analytics{filter_text}",
-        f"Period: Last {days} days",
-        "=" * 40,
-        "",
-        f"Total Messages: {analytics.get('total_messages', 0):,}",
-        f"  • Sent: {analytics.get('sent_count', 0):,}",
-        f"  • Received: {analytics.get('received_count', 0):,}",
-        f"  • Avg/day: {analytics.get('avg_daily_messages', 0):.1f}",
-        "",
-        f"Peak Activity:",
-        f"  • Busiest hour: {analytics.get('busiest_hour', 'N/A')}:00",
-        f"  • Busiest day: {analytics.get('busiest_day', 'N/A')}",
-        "",
-        f"Content:",
-        f"  • Attachments: {analytics.get('attachment_count', 0):,}",
-        f"  • Reactions: {analytics.get('reaction_count', 0):,}",
-    ]
-
-    # Add top contacts if not filtering by contact
-    top_contacts = analytics.get("top_contacts", [])
-    if top_contacts:
-        response_lines.append("")
-        response_lines.append("Top Contacts:")
-        for i, tc in enumerate(top_contacts[:5], 1):
-            phone = tc.get("phone", "unknown")
-            contact = contacts.get_contact_by_phone(phone)
-            name = contact.name if contact else phone[:20]
-            count = tc.get("message_count", 0)
-            response_lines.append(f"  {i}. {name}: {count:,} messages")
-
-    return [types.TextContent(type="text", text="\n".join(response_lines))]
-
-
-async def handle_get_message_thread(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle get_message_thread tool call (T1 Feature).
-
-    Args:
-        arguments: {"message_guid": str, "limit": Optional[int]}
-
-    Returns:
-        Messages in the reply thread
-    """
-    # Validate message_guid
-    message_guid, error = validate_non_empty_string(arguments.get("message_guid"), "message_guid")
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-
-    # Validate limit
-    limit_raw = arguments.get("limit", 50)
-    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_MESSAGE_LIMIT)
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-    if limit is None:
-        limit = 50
-
-    # Get thread
-    thread_messages = messages.get_message_thread(message_guid=message_guid, limit=limit)
-
-    if not thread_messages:
-        return [
-            types.TextContent(
-                type="text",
-                text=f"No thread found for message GUID: {message_guid}"
-            )
-        ]
-
-    # Format response
-    response_lines = [
-        f"Message Thread ({len(thread_messages)} messages):",
-        ""
-    ]
-
-    for msg in thread_messages:
-        sender = msg.get("sender_handle", "unknown")
-        if msg.get("is_from_me"):
-            sender = "You"
-        else:
-            contact = contacts.get_contact_by_phone(sender)
-            if contact:
-                sender = contact.name
-
-        date = msg["date"][:16] if msg["date"] else "Unknown"
-        text = msg["text"][:100] + "..." if len(msg["text"]) > 100 else msg["text"]
-
-        # Thread visualization
-        if msg.get("is_thread_originator"):
-            prefix = "📌 "
-        else:
-            prefix = "  └ "
-
-        response_lines.append(f"{prefix}[{date}] {sender}:")
-        response_lines.append(f"    {text}")
-        response_lines.append("")
-
-    return [types.TextContent(type="text", text="\n".join(response_lines))]
-
-
-async def handle_extract_links(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle extract_links tool call (T1 Feature).
-
-    Args:
-        arguments: {"contact_name": Optional[str], "days": Optional[int], "limit": Optional[int]}
-
-    Returns:
-        URLs shared in conversations
-    """
-    contact_name = arguments.get("contact_name")
-    days = arguments.get("days")
-
-    # Validate limit
-    limit_raw = arguments.get("limit", 100)
-    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_SEARCH_RESULTS)
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-    if limit is None:
-        limit = 100
-
-    # Validate days if provided
-    if days:
-        validated, error = validate_positive_int(days, "days", min_val=1, max_val=365)
-        if error:
-            return [types.TextContent(type="text", text=f"Validation error: {error}")]
-        days = validated
-
-    # If contact_name provided, look up phone
-    phone_filter = None
-    if contact_name:
-        contact = contacts.get_contact_by_name(contact_name)
-        if not contact:
-            return [
-                types.TextContent(
-                    type="text",
-                    text=f"Contact '{contact_name}' not found"
-                )
-            ]
-        phone_filter = contact.phone
-
-    # Get links
-    link_list = messages.extract_links(phone=phone_filter, days=days, limit=limit)
-
-    if not link_list:
-        filter_text = ""
-        if contact_name:
-            filter_text += f" from {contact_name}"
-        if days:
-            filter_text += f" in the last {days} days"
-        return [
-            types.TextContent(
-                type="text",
-                text=f"No links found{filter_text}."
-            )
-        ]
-
-    # Format response
-    filter_text = ""
-    if contact_name:
-        filter_text = f" from {contact_name}"
-    if days:
-        filter_text += f" (last {days} days)"
-
-    response_lines = [
-        f"🔗 Links{filter_text} ({len(link_list)} found):",
-        ""
-    ]
-
-    for link in link_list:
-        sender = link.get("sender_handle", "unknown")
-        if link.get("is_from_me"):
-            sender = "You"
-        else:
-            contact = contacts.get_contact_by_phone(sender)
-            if contact:
-                sender = contact.name
-
-        date = link["date"][:10] if link["date"] else "Unknown"
-        url = link.get("url", "")
-
-        response_lines.append(f"• {url}")
-        response_lines.append(f"  Shared by {sender} on {date}")
-        response_lines.append("")
-
-    return [types.TextContent(type="text", text="\n".join(response_lines))]
-
-
-async def handle_get_voice_messages(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle get_voice_messages tool call (T1 Feature).
-
-    Args:
-        arguments: {"contact_name": Optional[str], "limit": Optional[int]}
-
-    Returns:
-        Voice messages with file paths
-    """
-    contact_name = arguments.get("contact_name")
-
-    # Validate limit
-    limit_raw = arguments.get("limit", 50)
-    limit, error = validate_positive_int(limit_raw, "limit", max_val=MAX_MESSAGE_LIMIT)
-    if error:
-        return [types.TextContent(type="text", text=f"Validation error: {error}")]
-    if limit is None:
-        limit = 50
-
-    # If contact_name provided, look up phone
-    phone_filter = None
-    if contact_name:
-        contact = contacts.get_contact_by_name(contact_name)
-        if not contact:
-            return [
-                types.TextContent(
-                    type="text",
-                    text=f"Contact '{contact_name}' not found"
-                )
-            ]
-        phone_filter = contact.phone
-
-    # Get voice messages
-    voice_list = messages.get_voice_messages(phone=phone_filter, limit=limit)
-
-    if not voice_list:
-        filter_text = f" from {contact_name}" if contact_name else ""
-        return [
-            types.TextContent(
-                type="text",
-                text=f"No voice messages found{filter_text}."
-            )
-        ]
-
-    # Format response
-    filter_text = f" from {contact_name}" if contact_name else ""
-    response_lines = [
-        f"🎤 Voice Messages{filter_text} ({len(voice_list)} found):",
-        ""
-    ]
-
-    for vm in voice_list:
-        sender = vm.get("sender_handle", "unknown")
-        if vm.get("is_from_me"):
-            sender = "You"
-        else:
-            contact = contacts.get_contact_by_phone(sender)
-            if contact:
-                sender = contact.name
-
-        date = vm["date"][:16] if vm["date"] else "Unknown"
-        size_kb = (vm.get("size_bytes", 0) or 0) / 1024
-        played = "✓ played" if vm.get("is_played") else "unplayed"
-        path = vm.get("attachment_path", "N/A")
-
-        response_lines.append(f"🎵 From {sender} ({date})")
-        response_lines.append(f"   Size: {size_kb:.1f} KB | Status: {played}")
-        if path:
-            response_lines.append(f"   Path: {path}")
-        response_lines.append("")
-
-    response_lines.append("Tip: Voice message paths can be passed to transcription services.")
-
-    return [types.TextContent(type="text", text="\n".join(response_lines))]
-
-
-async def handle_get_scheduled_messages(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle get_scheduled_messages tool call (T1 Feature).
-
-    Returns:
-        Scheduled messages pending send
-    """
-    # Get scheduled messages
-    scheduled_list = messages.get_scheduled_messages()
-
-    if not scheduled_list:
-        return [
-            types.TextContent(
-                type="text",
-                text="No scheduled messages found."
-            )
-        ]
-
-    # Format response
-    response_lines = [
-        f"📅 Scheduled Messages ({len(scheduled_list)} pending):",
-        ""
-    ]
-
-    for msg in scheduled_list:
-        recipient = msg.get("recipient_handle", "unknown")
-        contact = contacts.get_contact_by_phone(recipient)
-        recipient_name = contact.name if contact else recipient[:20]
-
-        scheduled_date = msg["scheduled_date"][:16] if msg["scheduled_date"] else "Unknown"
-        text = msg["text"][:80] + "..." if len(msg["text"]) > 80 else msg["text"]
-        state = msg.get("schedule_state", "pending")
-
-        response_lines.append(f"⏰ To {recipient_name}")
-        response_lines.append(f"   Scheduled: {scheduled_date}")
-        response_lines.append(f"   Status: {state}")
-        response_lines.append(f"   \"{text}\"")
-        response_lines.append("")
-
-    return [types.TextContent(type="text", text="\n".join(response_lines))]
-
-
-# ===== T2 FEATURE HANDLERS =====
-
-
-async def handle_get_conversation_for_summary(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle get_conversation_for_summary tool call (T2 Feature).
-
-    Returns conversation data formatted for AI summarization.
-    """
-    contact_name = arguments.get("contact_name")
-    days = arguments.get("days")
-    limit = arguments.get("limit", 200)
-
-    if not contact_name:
-        return [types.TextContent(type="text", text="Error: contact_name is required")]
-
-    # Look up contact
-    contact = contacts.find_contact(contact_name)
-    if not contact:
-        return [
-            types.TextContent(
-                type="text",
-                text=f"Contact '{contact_name}' not found. Run 'python3 scripts/sync_contacts.py' to sync contacts."
-            )
-        ]
-
-    # Get conversation data
-    result = messages.get_conversation_for_summary(
-        phone=contact.phone,
-        days=days,
-        limit=limit
-    )
-
-    if result.get("error"):
-        return [types.TextContent(type="text", text=f"Error: {result['error']}")]
-
-    if result.get("message_count", 0) == 0:
-        return [
-            types.TextContent(
-                type="text",
-                text=f"No messages found with {contact.name} in the specified time range."
-            )
-        ]
-
-    # Format response
-    response_lines = [
-        f"📝 Conversation with {contact.name} ready for summarization:",
-        f"",
-        f"📊 Stats:",
-        f"   Messages: {result['message_count']} ({result['key_stats']['sent']} sent, {result['key_stats']['received']} received)",
-        f"   Avg length: {result['key_stats']['avg_message_length']} chars",
-        f"   Date range: {result['date_range']['start'][:10]} to {result['date_range']['end'][:10]}",
-        f"   Last interaction: {result['last_interaction'][:10]}",
-    ]
-
-    if result.get("recent_topics"):
-        response_lines.append(f"   Topics: {', '.join(result['recent_topics'][:8])}")
-
-    response_lines.extend([
-        f"",
-        f"💬 Conversation:",
-        result["conversation_text"]
-    ])
-
-    return [types.TextContent(type="text", text="\n".join(response_lines))]
-
-
-async def handle_detect_follow_up_needed(arguments: dict) -> list[types.TextContent]:
-    """
-    Handle detect_follow_up_needed tool call (T2 Feature).
-
-    Smart reminders - detects conversations needing follow-up.
-    """
-    days = arguments.get("days", 7)
-    min_stale_days = arguments.get("min_stale_days", 3)
-    limit = arguments.get("limit", 50)
-
-    result = messages.detect_follow_up_needed(
-        days=days,
-        min_stale_days=min_stale_days,
-        limit=limit
-    )
-
-    if result.get("error"):
-        return [types.TextContent(type="text", text=f"Error: {result['error']}")]
-
-    summary = result.get("summary", {})
-    total = summary.get("total_action_items", 0)
-
-    response_lines = [
-        f"🔔 Follow-up Analysis (last {days} days):",
-        f"",
-        f"📊 Summary: {total} items needing attention",
-        f"   • Unanswered questions: {summary.get('unanswered_questions', 0)}",
-        f"   • Pending promises: {summary.get('pending_promises', 0)}",
-        f"   • Waiting on them: {summary.get('waiting_on_them', 0)}",
-        f"   • Stale conversations: {summary.get('stale_conversations', 0)}",
-        f"   • Time-sensitive: {summary.get('time_sensitive', 0)}",
-        ""
-    ]
-
-    def format_phone(phone):
-        """Get contact name for phone if available."""
-        contact = contacts.get_contact_by_phone(phone)
-        return contact.name if contact else phone[:20]
-
-    # Unanswered questions
-    if result.get("unanswered_questions"):
-        response_lines.append("❓ Unanswered Questions:")
-        for item in result["unanswered_questions"][:5]:
-            response_lines.append(f"   From {format_phone(item['phone'])} ({item['days_ago']}d ago):")
-            response_lines.append(f"   \"{item['text'][:80]}...\"" if len(item['text']) > 80 else f"   \"{item['text']}\"")
-            response_lines.append("")
-
-    # Pending promises
-    if result.get("pending_promises"):
-        response_lines.append("🤝 Promises You Made:")
-        for item in result["pending_promises"][:5]:
-            response_lines.append(f"   To {format_phone(item['phone'])} ({item['days_ago']}d ago):")
-            response_lines.append(f"   \"{item['text'][:80]}...\"" if len(item['text']) > 80 else f"   \"{item['text']}\"")
-            response_lines.append("")
-
-    # Waiting on them
-    if result.get("waiting_on_them"):
-        response_lines.append("⏳ Waiting On Them:")
-        for item in result["waiting_on_them"][:5]:
-            response_lines.append(f"   From {format_phone(item['phone'])} ({item['days_waiting']}d waiting):")
-            response_lines.append(f"   \"{item['text'][:80]}...\"" if len(item['text']) > 80 else f"   \"{item['text']}\"")
-            response_lines.append("")
-
-    # Stale conversations
-    if result.get("stale_conversations"):
-        response_lines.append("💤 Stale Conversations (no reply):")
-        for item in result["stale_conversations"][:5]:
-            response_lines.append(f"   {format_phone(item['phone'])} ({item['days_since_reply']}d ago):")
-            response_lines.append(f"   \"{item['last_message'][:60]}...\"" if len(item['last_message']) > 60 else f"   \"{item['last_message']}\"")
-            response_lines.append("")
-
-    # Time-sensitive
-    if result.get("time_sensitive"):
-        response_lines.append("⏰ Time-Sensitive Messages:")
-        for item in result["time_sensitive"][:5]:
-            who = "You" if item["is_from_me"] else format_phone(item["phone"])
-            response_lines.append(f"   {who} ({item['days_ago']}d ago):")
-            response_lines.append(f"   \"{item['text'][:80]}...\"" if len(item['text']) > 80 else f"   \"{item['text']}\"")
-            response_lines.append("")
-
-    if total == 0:
-        response_lines.append("✅ All caught up! No follow-ups needed.")
-
-    return [types.TextContent(type="text", text="\n".join(response_lines))]
-
+# =============================================================================
+# MAIN ENTRY POINT
+# =============================================================================
 
 async def main():
     """Run the MCP server."""
@@ -2723,7 +923,7 @@ async def main():
         logger.warning("Grant Full Disk Access in System Settings")
 
     # Log loaded contacts
-    logger.info(f"Loaded {len(contacts.list_contacts())} contacts")
+    logger.info(f"Loaded {len(contacts_mgr.list_contacts())} contacts")
 
     # Run server
     async with stdio_server() as (read_stream, write_stream):

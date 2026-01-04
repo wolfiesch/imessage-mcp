@@ -38,6 +38,19 @@ claude mcp list
 ```
 Claude Code ──(JSON-RPC/stdio)──> mcp_server/server.py
                                         │
+                                        ├── mcp_server/handlers/     # Tool handlers by domain
+                                        │       ├── messaging.py     # send_message, send_message_by_phone
+                                        │       ├── reading.py       # get_recent_messages, search, attachments
+                                        │       ├── contacts.py      # add_contact, list_contacts
+                                        │       ├── groups.py        # list_group_chats, get_group_messages
+                                        │       ├── rag.py           # index_knowledge, search_knowledge
+                                        │       └── analytics.py     # get_conversation_analytics, follow-ups
+                                        │
+                                        ├── mcp_server/utils/        # Shared utilities
+                                        │       ├── validation.py    # Input validation helpers
+                                        │       ├── responses.py     # Response formatting
+                                        │       └── errors.py        # Error handling utilities
+                                        │
                                         ├── src/contacts_manager.py
                                         │       └── Loads contacts from config/contacts.json
                                         │
@@ -124,7 +137,10 @@ Returns best score normalized to 0-1.
 
 | File | Purpose |
 |------|---------|
-| `mcp_server/server.py` | MCP server entry point, tool handlers |
+| `mcp_server/server.py` | MCP server entry point, tool registry |
+| `mcp_server/config.py` | Configuration and path resolution |
+| `mcp_server/handlers/` | Tool handlers organized by domain |
+| `mcp_server/utils/` | Shared validation, response, error utilities |
 | `src/messages_interface.py` | AppleScript send + chat.db read |
 | `src/contacts_manager.py` | Contact lookup from JSON config |
 | `src/contacts_sync.py` | macOS Contacts sync + fuzzy matching |

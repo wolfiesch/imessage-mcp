@@ -12,6 +12,7 @@ Features:
 - State persistence to track what's been notified
 """
 
+import os
 import sys
 import json
 import logging
@@ -28,7 +29,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.messages_interface import MessagesInterface
 
 # Configuration
-DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1455870395415662760/0eQd4jNhZsBnMnU__vU-MRLoc7xNkG874I0PMRPnoYB8_r7advPwhpTo8ruNSyPfqvdm"
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 STATE_FILE = PROJECT_ROOT / "data" / "notifier_state.json"
 LOG_FILE = PROJECT_ROOT / "logs" / "notifier.log"
 MIN_NOTIFICATION_INTERVAL_HOURS = 4
@@ -195,6 +196,10 @@ def format_discord_embed(data: Dict) -> Dict:
 
 def send_discord_notification(embed: Dict) -> bool:
     """Send notification to Discord webhook."""
+    if not DISCORD_WEBHOOK_URL:
+        logger.error("Missing DISCORD_WEBHOOK_URL environment variable")
+        return False
+
     payload = {
         "embeds": [embed]
     }

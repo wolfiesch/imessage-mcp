@@ -1,0 +1,176 @@
+[
+  {
+    "name": "message_fetch_tiny",
+    "elapsed_seconds": 0.0071225419524125755,
+    "memory_used_mb": 0.921875,
+    "timestamp": "2025-12-31T23:53:54.731344",
+    "metrics": {
+      "messages_fetched": 100
+    }
+  },
+  {
+    "name": "chunking_tiny",
+    "elapsed_seconds": 0.00022499996703118086,
+    "memory_used_mb": 0.03125,
+    "timestamp": "2025-12-31T23:53:54.731357",
+    "metrics": {
+      "messages_chunked": 100,
+      "chunks_created": 4
+    }
+  },
+  {
+    "name": "full_index_tiny",
+    "elapsed_seconds": 3.2689424169948325,
+    "memory_used_mb": 85.640625,
+    "timestamp": "2025-12-31T23:53:54.731359",
+    "metrics": {
+      "messages_fetched": 100,
+      "chunks_indexed": 4
+    }
+  },
+  {
+    "name": "message_fetch_small",
+    "elapsed_seconds": 0.009826917026657611,
+    "memory_used_mb": 1.90625,
+    "timestamp": "2025-12-31T23:53:54.731360",
+    "metrics": {
+      "messages_fetched": 1000
+    }
+  },
+  {
+    "name": "chunking_small",
+    "elapsed_seconds": 0.0018138749874196947,
+    "memory_used_mb": 0.25,
+    "timestamp": "2025-12-31T23:53:54.731362",
+    "metrics": {
+      "messages_chunked": 1000,
+      "chunks_created": 56
+    }
+  },
+  {
+    "name": "full_index_small",
+    "elapsed_seconds": 0.07517570798518136,
+    "memory_used_mb": -1.5625,
+    "timestamp": "2025-12-31T23:53:54.731363",
+    "metrics": {
+      "messages_fetched": 1000,
+      "chunks_indexed": 57
+    }
+  },
+  {
+    "name": "message_fetch_medium",
+    "elapsed_seconds": 0.08374366699717939,
+    "memory_used_mb": 9.9375,
+    "timestamp": "2025-12-31T23:53:54.731365",
+    "metrics": {
+      "messages_fetched": 10000
+    }
+  },
+  {
+    "name": "chunking_medium",
+    "elapsed_seconds": 0.017098333046305925,
+    "memory_used_mb": 1.78125,
+    "timestamp": "2025-12-31T23:53:54.731365",
+    "metrics": {
+      "messages_chunked": 10000,
+      "chunks_created": 573
+    }
+  },
+  {
+    "name": "full_index_medium",
+    "elapsed_seconds": 0.6680555419879965,
+    "memory_used_mb": -2.890625,
+    "timestamp": "2025-12-31T23:53:54.731366",
+    "metrics": {
+      "messages_fetched": 10000,
+      "chunks_indexed": 584
+    }
+  },
+  {
+    "name": "message_fetch_tiny",
+    "elapsed_seconds": 0.0027163340128026903,
+    "memory_used_mb": 1.171875,
+    "timestamp": "2025-12-31T23:54:11.028016",
+    "metrics": {
+      "messages_fetched": 100
+    }
+  },
+  {
+    "name": "chunking_tiny",
+    "elapsed_seconds": 0.0002566249459050596,
+    "memory_used_mb": 0.03125,
+    "timestamp": "2025-12-31T23:54:11.028028",
+    "metrics": {
+      "messages_chunked": 100,
+      "chunks_created": 4
+    }
+  },
+  {
+    "name": "full_index_tiny",
+    "elapsed_seconds": 2.04600637499243,
+    "memory_used_mb": 99.390625,
+    "timestamp": "2025-12-31T23:54:11.028030",
+    "metrics": {
+      "messages_fetched": 100,
+      "chunks_indexed": 4
+    }
+  },
+  {
+    "name": "message_fetch_small",
+    "elapsed_seconds": 0.00666441599605605,
+    "memory_used_mb": 2.0,
+    "timestamp": "2025-12-31T23:54:11.028031",
+    "metrics": {
+      "messages_fetched": 1000
+    }
+  },
+  {
+    "name": "chunking_small",
+    "elapsed_seconds": 0.0019834170234389603,
+    "memory_used_mb": 0.28125,
+    "timestamp": "2025-12-31T23:54:11.028032",
+    "metrics": {
+      "messages_chunked": 1000,
+      "chunks_created": 56
+    }
+  },
+  {
+    "name": "full_index_small",
+    "elapsed_seconds": 0.0720467499922961,
+    "memory_used_mb": 0.21875,
+    "timestamp": "2025-12-31T23:54:11.028033",
+    "metrics": {
+      "messages_fetched": 1000,
+      "chunks_indexed": 57
+    }
+  },
+  {
+    "name": "message_fetch_medium",
+    "elapsed_seconds": 0.06261024996638298,
+    "memory_used_mb": 9.5625,
+    "timestamp": "2025-12-31T23:54:11.028034",
+    "metrics": {
+      "messages_fetched": 10000
+    }
+  },
+  {
+    "name": "chunking_medium",
+    "elapsed_seconds": 0.017081124999094754,
+    "memory_used_mb": 1.609375,
+    "timestamp": "2025-12-31T23:54:11.028035",
+    "metrics": {
+      "messages_chunked": 10000,
+      "chunks_created": 573
+    }
+  },
+  {
+    "name": "full_index_medium",
+    "elapsed_seconds": 0.6741841250332072,
+    "memory_used_mb": -6.0625,
+    "timestamp": "2025-12-31T23:54:11.028036",
+    "metrics": {
+      "messages_fetched": 10000,
+      "chunks_indexed": 584
+    }
+  }
+]
