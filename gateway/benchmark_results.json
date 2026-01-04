@@ -2,7 +2,7 @@
   "suite_name": "full",
   "timestamp": "2026-01-04 03:15:35",
   "metadata": {
-    "cli_path": "/Users/wolfgangschoenberger/LIFE-PLANNER/Texting/gateway/imessage_client.py",
+    "cli_path": "gateway/imessage_client.py",
     "total_benchmarks": 20,
     "python_version": "3.13.2"
   },
