@@ -2609,13 +2609,23 @@ class MessagesInterface:
             for handle, msg_count, last_date in all_handles:
                 handle_normalized = "".join(c for c in handle if c.isdigit())
 
-                # Check if this handle matches any known phone
+                # Check if this handle matches any known phone (bidirectional matching)
                 is_known = False
+
+                # Direct full match
                 if handle_normalized in normalized_known:
                     is_known = True
-                # Check last 10 digits (without country code)
-                elif len(handle_normalized) > 10 and handle_normalized[-10:] in normalized_known:
+                # Check if handle's last 10 digits match any known phone
+                elif len(handle_normalized) >= 10 and handle_normalized[-10:] in normalized_known:
                     is_known = True
+                # Bidirectional check: does any known phone end with this handle's last 10?
+                elif len(handle_normalized) >= 10:
+                    handle_last_10 = handle_normalized[-10:]
+                    for known in known_phones:
+                        known_digits = "".join(c for c in known if c.isdigit())
+                        if len(known_digits) >= 10 and known_digits.endswith(handle_last_10):
+                            is_known = True
+                            break
 
                 if not is_known:
                     unknown_handles.append((handle, msg_count, last_date))
@@ -2647,7 +2657,7 @@ class MessagesInterface:
                     # Extract text content
                     msg_text = text
                     if not msg_text and blob:
-                        msg_text = self.extract_text_from_blob(blob)
+                        msg_text = extract_text_from_blob(blob)
                     if not msg_text:
                         msg_text = "[attachment or empty]"
 
