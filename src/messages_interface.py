@@ -71,6 +71,30 @@ def is_group_chat_identifier(chat_identifier: Optional[str]) -> bool:
     return False
 
 
+def sanitize_like_pattern(value: str) -> str:
+    """
+    Escape SQL LIKE wildcards in user input to prevent pattern injection.
+
+    LIKE patterns use % (any chars) and _ (single char) as wildcards.
+    User input must be escaped to prevent unintended matching behavior
+    or performance issues from overly broad patterns.
+
+    Args:
+        value: User-provided string to be used in a LIKE clause
+
+    Returns:
+        Escaped string safe for use in SQL LIKE patterns
+
+    Example:
+        >>> sanitize_like_pattern("test%value")
+        'test\\%value'
+    """
+    if not value:
+        return value
+    # Escape backslashes first, then LIKE wildcards
+    return value.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+
+
 def parse_attributed_body(blob: bytes) -> Optional[str]:
     """
     Parse the attributedBody column from macOS Messages database.
@@ -922,7 +946,7 @@ class MessagesInterface:
                     JOIN handle h ON chj.handle_id = h.ROWID
                     WHERE h.id LIKE ?
                         AND (c.chat_identifier LIKE 'chat%' OR c.display_name IS NOT NULL)
-                """, (f"%{participant_filter}%",))
+                """, (f"%{sanitize_like_pattern(participant_filter)}%",))
 
             chats = cursor.fetchall()
 
@@ -1130,7 +1154,7 @@ class MessagesInterface:
 
             if phone:
                 query += " AND h.id LIKE ?"
-                params.append(f"%{phone}%")
+                params.append(f"%{sanitize_like_pattern(phone)}%")
 
             if mime_type_filter:
                 query += " AND a.mime_type LIKE ?"
@@ -1347,7 +1371,7 @@ class MessagesInterface:
 
             if phone:
                 query += " AND h.id LIKE ?"
-                params.append(f"%{phone}%")
+                params.append(f"%{sanitize_like_pattern(phone)}%")
 
             query += " ORDER BY r.date DESC LIMIT ?"
             params.append(limit)
@@ -1451,7 +1475,7 @@ class MessagesInterface:
 
             if phone:
                 base_filter += " AND h.id LIKE ?"
-                params.append(f"%{phone}%")
+                params.append(f"%{sanitize_like_pattern(phone)}%")
 
             # Get total counts
             cursor.execute(f"""
@@ -1737,7 +1761,7 @@ class MessagesInterface:
 
             if phone:
                 query += " AND h.id LIKE ?"
-                params.append(f"%{phone}%")
+                params.append(f"%{sanitize_like_pattern(phone)}%")
 
             if days:
                 cutoff_date = datetime.now() - timedelta(days=days)
@@ -1872,7 +1896,7 @@ class MessagesInterface:
 
             if phone:
                 query += " AND h.id LIKE ?"
-                params.append(f"%{phone}%")
+                params.append(f"%{sanitize_like_pattern(phone)}%")
 
             query += " ORDER BY m.date DESC LIMIT ?"
             params.append(limit)
@@ -2609,13 +2633,23 @@ class MessagesInterface:
             for handle, msg_count, last_date in all_handles:
                 handle_normalized = "".join(c for c in handle if c.isdigit())
 
-                # Check if this handle matches any known phone
+                # Check if this handle matches any known phone (bidirectional matching)
                 is_known = False
+
+                # Direct full match
                 if handle_normalized in normalized_known:
                     is_known = True
-                # Check last 10 digits (without country code)
-                elif len(handle_normalized) > 10 and handle_normalized[-10:] in normalized_known:
+                # Check if handle's last 10 digits match any known phone
+                elif len(handle_normalized) >= 10 and handle_normalized[-10:] in normalized_known:
                     is_known = True
+                # Bidirectional check: does any known phone end with this handle's last 10?
+                elif len(handle_normalized) >= 10:
+                    handle_last_10 = handle_normalized[-10:]
+                    for known in known_phones:
+                        known_digits = "".join(c for c in known if c.isdigit())
+                        if len(known_digits) >= 10 and known_digits.endswith(handle_last_10):
+                            is_known = True
+                            break
 
                 if not is_known:
                     unknown_handles.append((handle, msg_count, last_date))
@@ -2647,7 +2681,9 @@ class MessagesInterface:
                     # Extract text content
                     msg_text = text
                     if not msg_text and blob:
-                        msg_text = self.extract_text_from_blob(blob)
+                        # Fixed 01/04/2026: extract_text_from_blob is a module-level function (line ~147),
+                        # not a class method. Previously incorrectly called as self.extract_text_from_blob()
+                        msg_text = extract_text_from_blob(blob)
                     if not msg_text:
                         msg_text = "[attachment or empty]"
 

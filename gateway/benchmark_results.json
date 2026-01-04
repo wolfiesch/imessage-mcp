@@ -1,0 +1,231 @@
+{
+  "suite_name": "full",
+  "timestamp": "2026-01-04 03:15:35",
+  "metadata": {
+    "cli_path": "gateway/imessage_client.py",
+    "total_benchmarks": 20,
+    "python_version": "3.13.2"
+  },
+  "results": [
+    {
+      "name": "startup_overhead",
+      "description": "CLI startup time with --help",
+      "iterations": 20,
+      "mean_ms": 43.550664733629674,
+      "median_ms": 42.69160452531651,
+      "min_ms": 40.25358404032886,
+      "max_ms": 60.13574998360127,
+      "std_dev_ms": 4.228595771811911,
+      "success_rate": 100.0
+    },
+    {
+      "name": "contacts_list",
+      "description": "List all contacts (no JSON)",
+      "iterations": 10,
+      "mean_ms": 40.47680819639936,
+      "median_ms": 40.74639600003138,
+      "min_ms": 37.64083399437368,
+      "max_ms": 42.08254104014486,
+      "std_dev_ms": 1.210290434297807,
+      "success_rate": 100.0
+    },
+    {
+      "name": "contacts_list_json",
+      "description": "List all contacts with JSON serialization",
+      "iterations": 10,
+      "mean_ms": 42.88689580280334,
+      "median_ms": 42.32754197437316,
+      "min_ms": 41.05312505271286,
+      "max_ms": 46.439249999821186,
+      "std_dev_ms": 1.5018808293650998,
+      "success_rate": 100.0
+    },
+    {
+      "name": "unread_messages",
+      "description": "Fetch unread messages",
+      "iterations": 10,
+      "mean_ms": 44.085958297364414,
+      "median_ms": 43.1073330109939,
+      "min_ms": 40.67612497601658,
+      "max_ms": 52.845209022052586,
+      "std_dev_ms": 3.5331629253381553,
+      "success_rate": 100.0
+    },
+    {
+      "name": "recent_conversations_10",
+      "description": "Fetch 10 recent conversations",
+      "iterations": 10,
+      "mean_ms": 42.215412482619286,
+      "median_ms": 41.87527048634365,
+      "min_ms": 39.332999964244664,
+      "max_ms": 46.78291699383408,
+      "std_dev_ms": 2.4262841638426536,
+      "success_rate": 100.0
+    },
+    {
+      "name": "recent_conversations_50",
+      "description": "Fetch 50 recent conversations",
+      "iterations": 10,
+      "mean_ms": 44.55995416501537,
+      "median_ms": 44.799228955525905,
+      "min_ms": 41.9678749749437,
+      "max_ms": 46.895166975446045,
+      "std_dev_ms": 1.7296593340600492,
+      "success_rate": 100.0
+    },
+    {
+      "name": "search_small",
+      "description": "Search messages (limit 10)",
+      "iterations": 10,
+      "mean_ms": 41.83178341481835,
+      "median_ms": 41.65472905151546,
+      "min_ms": 40.495334076695144,
+      "max_ms": 43.3281670557335,
+      "std_dev_ms": 1.0789771478697183,
+      "success_rate": 100.0
+    },
+    {
+      "name": "search_medium",
+      "description": "Search messages (limit 50)",
+      "iterations": 10,
+      "mean_ms": 43.32729137968272,
+      "median_ms": 43.13683300279081,
+      "min_ms": 40.59837502427399,
+      "max_ms": 47.87633300293237,
+      "std_dev_ms": 2.1293582412550127,
+      "success_rate": 100.0
+    },
+    {
+      "name": "search_large",
+      "description": "Search messages (limit 200)",
+      "iterations": 5,
+      "mean_ms": 46.584083791822195,
+      "median_ms": 45.157041982747614,
+      "min_ms": 42.849209043197334,
+      "max_ms": 53.27895900700241,
+      "std_dev_ms": 4.048848995585997,
+      "success_rate": 100.0
+    },
+    {
+      "name": "analytics_30days",
+      "description": "Conversation analytics for 30 days",
+      "iterations": 5,
+      "mean_ms": 128.84044158272445,
+      "median_ms": 100.61045794282109,
+      "min_ms": 98.712999955751,
+      "max_ms": 238.16487495787442,
+      "std_dev_ms": 61.224861600859846,
+      "success_rate": 100.0
+    },
+    {
+      "name": "followup_detection",
+      "description": "Detect follow-ups needed (7 days)",
+      "iterations": 5,
+      "mean_ms": 55.68971657194197,
+      "median_ms": 55.35133299417794,
+      "min_ms": 53.01870789844543,
+      "max_ms": 59.06091700308025,
+      "std_dev_ms": 2.1965123371809168,
+      "success_rate": 100.0
+    },
+    {
+      "name": "groups_list",
+      "description": "List group chats",
+      "iterations": 10,
+      "mean_ms": 61.0778458067216,
+      "median_ms": 60.106562508735806,
+      "min_ms": 57.954124989919364,
+      "max_ms": 71.17491692770272,
+      "std_dev_ms": 3.7713458261122104,
+      "success_rate": 100.0
+    },
+    {
+      "name": "attachments",
+      "description": "Get attachments (photos/videos/files)",
+      "iterations": 10,
+      "mean_ms": 85.12522068340331,
+      "median_ms": 68.23312496999279,
+      "min_ms": 66.66949996724725,
+      "max_ms": 235.71704095229506,
+      "std_dev_ms": 52.94525579709213,
+      "success_rate": 100.0
+    },
+    {
+      "name": "reactions",
+      "description": "Get reactions (tapbacks)",
+      "iterations": 10,
+      "mean_ms": 41.46746260812506,
+      "median_ms": 40.63425003550947,
+      "min_ms": 40.09933292400092,
+      "max_ms": 43.29733399208635,
+      "std_dev_ms": 1.3013146171923762,
+      "success_rate": 100.0
+    },
+    {
+      "name": "links",
+      "description": "Extract shared URLs",
+      "iterations": 10,
+      "mean_ms": 40.35262510878965,
+      "median_ms": 40.5297499964945,
+      "min_ms": 39.21550000086427,
+      "max_ms": 41.51541704777628,
+      "std_dev_ms": 0.8157559512072216,
+      "success_rate": 100.0
+    },
+    {
+      "name": "voice_messages",
+      "description": "Get voice messages",
+      "iterations": 10,
+      "mean_ms": 65.54126660339534,
+      "median_ms": 62.509645940735936,
+      "min_ms": 59.82979200780392,
+      "max_ms": 81.18879201356322,
+      "std_dev_ms": 6.974881993877034,
+      "success_rate": 100.0
+    },
+    {
+      "name": "handles_list",
+      "description": "List recent phone/email handles",
+      "iterations": 10,
+      "mean_ms": 44.07328322995454,
+      "median_ms": 43.77064557047561,
+      "min_ms": 40.83966696634889,
+      "max_ms": 51.50508298538625,
+      "std_dev_ms": 2.9009306549595055,
+      "success_rate": 100.0
+    },
+    {
+      "name": "unknown_senders",
+      "description": "Find messages from non-contacts",
+      "iterations": 5,
+      "mean_ms": 46.27844998613,
+      "median_ms": 45.50849995575845,
+      "min_ms": 44.77795900311321,
+      "max_ms": 48.28612506389618,
+      "std_dev_ms": 1.5338152305989878,
+      "success_rate": 100.0
+    },
+    {
+      "name": "scheduled_messages",
+      "description": "Get scheduled messages",
+      "iterations": 10,
+      "mean_ms": 40.762225282378495,
+      "median_ms": 40.51852104021236,
+      "min_ms": 39.406999945640564,
+      "max_ms": 43.26483397744596,
+      "std_dev_ms": 1.2053283009130427,
+      "success_rate": 100.0
+    },
+    {
+      "name": "conversation_summary",
+      "description": "Get AI-ready conversation summary",
+      "iterations": 5,
+      "mean_ms": 42.32908359263092,
+      "median_ms": 42.072625015862286,
+      "min_ms": 41.14695894531906,
+      "max_ms": 43.497374979779124,
+      "std_dev_ms": 1.0360997020829912,
+      "success_rate": 100.0
+    }
+  ]
+}
