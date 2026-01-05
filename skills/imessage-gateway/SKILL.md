@@ -75,7 +75,7 @@ If no arguments provided, show the Reference section below.
 | Analytics | 129ms | ~850ms | **7x** |
 | Semantic search | 150ms | ~900ms | **6x** |
 
-### All Commands (28 total)
+### All Commands (27 total)
 
 **Messaging (3)**
 - `send <contact> <message>` - Send to contact
@@ -95,14 +95,13 @@ If no arguments provided, show the Reference section below.
 **Contacts (1)**
 - `contacts`
 
-**Semantic Search/RAG (7)**
+**Semantic Search/RAG (6)**
 - `index` - Index content for semantic search
 - `search` - Semantic search across indexed content
 - `ask` - Get AI-formatted context
 - `stats` - Knowledge base statistics
 - `sources` - List available/indexed sources
 - `clear` - Clear indexed data
-- `migrate` - Migrate from legacy RAG
 
 ### Full Command Examples
 

@@ -43,6 +43,9 @@ except ImportError as e:
 # Default config path (relative to repo root)
 CONTACTS_CONFIG = REPO_ROOT / "config" / "contacts.json"
 
+# Valid RAG sources (single source of truth)
+VALID_RAG_SOURCES = ['imessage', 'superwhisper', 'notes', 'local', 'gmail', 'slack', 'calendar']
+
 
 def get_interfaces():
     """Initialize MessagesInterface and ContactsManager."""
@@ -190,14 +193,9 @@ def cmd_send_by_phone(args):
     """Send a message directly to a phone number (no contact lookup)."""
     mi, _ = get_interfaces()
 
-    # Normalize phone number (strip formatting)
-    phone = (
-        args.phone.strip()
-        .replace(" ", "")
-        .replace("-", "")
-        .replace("(", "")
-        .replace(")", "")
-    )
+    # Normalize phone number (strip formatting characters)
+    phone = args.phone.strip().translate(str.maketrans('', '', ' ()-.'))
+
 
     message = " ".join(args.message)
 
@@ -471,7 +469,8 @@ def cmd_links(args):
             return 1
         phone = contact.phone
 
-    links = mi.extract_links(phone=phone, days=args.days, limit=args.limit)
+    days = None if getattr(args, "all_time", False) else (args.days if args.days is not None else 30)
+    links = mi.extract_links(phone=phone, days=days, limit=args.limit)
 
     if args.json:
         print(json.dumps(links, indent=2, default=str))
@@ -699,11 +698,10 @@ def cmd_index(args):
     start = time.time()
 
     source = args.source.lower()
-    valid_sources = ['imessage', 'superwhisper', 'notes', 'local', 'gmail', 'slack', 'calendar']
 
-    if source not in valid_sources:
+    if source not in VALID_RAG_SOURCES:
         print(f"Error: Unknown source '{source}'", file=sys.stderr)
-        print(f"Valid sources: {', '.join(valid_sources)}", file=sys.stderr)
+        print(f"Valid sources: {', '.join(VALID_RAG_SOURCES)}", file=sys.stderr)
         return 1
 
     try:
@@ -952,48 +950,6 @@ def cmd_sources(args):
         return 1
 
 
-def cmd_migrate(args):
-    """Migrate from legacy RAG collection to unified collection."""
-    try:
-        retriever = get_unified_retriever()
-
-        # Check if migration is needed
-        stats = retriever.get_stats()
-        imessage_chunks = stats.get('by_source', {}).get('imessage', {}).get('chunk_count', 0)
-
-        if imessage_chunks > 0 and not args.force:
-            print(f"iMessage already has {imessage_chunks} chunks in unified collection.")
-            print("Use --force to migrate anyway (may create duplicates).")
-            return 0
-
-        # Check for legacy collection
-        try:
-            from src.rag.store import MessageVectorStore
-            legacy_store = MessageVectorStore()
-            legacy_stats = legacy_store.get_stats()
-            legacy_count = legacy_stats.get('chunk_count', 0)
-
-            if legacy_count == 0:
-                print("No legacy data to migrate.")
-                return 0
-
-            print(f"Found {legacy_count} chunks in legacy collection.")
-
-        except Exception:
-            print("No legacy RAG system found or it's not accessible.")
-            return 0
-
-        # Perform migration
-        print("Migration requires manual implementation - see migrate_rag_data handler.")
-        print("For now, re-index iMessage using: index --source=imessage --full")
-
-        return 0
-
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="iMessage Gateway - Standalone CLI for iMessage operations",
@@ -1137,6 +1093,8 @@ Examples:
     p_links.add_argument('contact', nargs='?', help='Contact name (optional)')
     p_links.add_argument('--days', '-d', type=int, choices=range(1, 366), metavar='N',
                          help='Days to look back (1-365)')
+    p_links.add_argument('--all-time', action='store_true',
+                         help='Search without date cutoff (can be slow)')
     p_links.add_argument('--limit', '-l', type=int, default=100, choices=range(1, 501), metavar='N',
                          help='Max links (1-500, default: 100)')
     p_links.add_argument('--json', action='store_true', help='Output as JSON')
@@ -1202,7 +1160,7 @@ Examples:
     # index command
     p_index = subparsers.add_parser('index', help='Index content for semantic search')
     p_index.add_argument('--source', '-s', required=True,
-                         choices=['imessage', 'superwhisper', 'notes', 'local', 'gmail', 'slack', 'calendar'],
+                         choices=VALID_RAG_SOURCES,
                          help='Source to index')
     p_index.add_argument('--days', '-d', type=int, default=30,
                          help='Days of history to index (default: 30)')
@@ -1255,12 +1213,6 @@ Examples:
     p_sources = subparsers.add_parser('sources', help='List available and indexed sources')
     p_sources.add_argument('--json', action='store_true', help='Output as JSON')
     p_sources.set_defaults(func=cmd_sources)
-
-    # migrate command
-    p_migrate = subparsers.add_parser('migrate', help='Migrate from legacy RAG collection')
-    p_migrate.add_argument('--force', '-f', action='store_true',
-                           help='Migrate even if unified collection has data')
-    p_migrate.set_defaults(func=cmd_migrate)
 
     args = parser.parse_args()
 

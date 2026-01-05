@@ -1486,7 +1486,7 @@ class MessagesInterface:
                 FROM message m
                 LEFT JOIN handle h ON m.handle_id = h.ROWID
                 {base_filter}
-                AND m.associated_message_type IS NULL OR m.associated_message_type = 0
+                AND (m.associated_message_type IS NULL OR m.associated_message_type = 0)
             """, params)
             row = cursor.fetchone()
             total, sent, received = row if row else (0, 0, 0)
@@ -1745,70 +1745,43 @@ class MessagesInterface:
             conn = sqlite3.connect(f"file:{self.messages_db_path}?mode=ro", uri=True)
             cursor = conn.cursor()
 
-            # Build query
-            query = """
-                SELECT
-                    m.text,
-                    m.attributedBody,
-                    m.date,
-                    m.is_from_me,
-                    h.id as sender_handle
-                FROM message m
-                LEFT JOIN handle h ON m.handle_id = h.ROWID
-                WHERE (m.text LIKE '%http%' OR m.was_data_detected = 1)
-            """
-            params = []
-
-            if phone:
-                query += " AND h.id LIKE ?"
-                params.append(f"%{sanitize_like_pattern(phone)}%")
-
-            if days:
-                cutoff_date = datetime.now() - timedelta(days=days)
-                cocoa_epoch = datetime(2001, 1, 1)
-                cutoff_cocoa = int((cutoff_date - cocoa_epoch).total_seconds() * 1_000_000_000)
-                query += " AND m.date >= ?"
-                params.append(cutoff_cocoa)
-
-            query += " ORDER BY m.date DESC LIMIT ?"
-            params.append(limit * 2)  # Fetch more since some may not have URLs
-
-            cursor.execute(query, params)
-            rows = cursor.fetchall()
-
             # URL regex pattern
             url_pattern = re.compile(
                 r'https?://[^\s<>"{}|\\^`\[\]]+'
             )
 
-            links = []
-            for row in rows:
-                text, attributed_body, date_cocoa, is_from_me, sender_handle = row
+            cocoa_epoch = datetime(2001, 1, 1)
+            cutoff_cocoa = None
+            if days:
+                cutoff_date = datetime.now() - timedelta(days=days)
+                cutoff_cocoa = int((cutoff_date - cocoa_epoch).total_seconds() * 1_000_000_000)
 
-                # Extract text
-                message_text = text
-                if not message_text and attributed_body:
-                    message_text = extract_text_from_blob(attributed_body)
+            filters = []
+            params_base = []
+            if phone:
+                filters.append("h.id LIKE ?")
+                params_base.append(f"%{sanitize_like_pattern(phone)}%")
+            if cutoff_cocoa is not None:
+                filters.append("m.date >= ?")
+                params_base.append(cutoff_cocoa)
+            filter_sql = (" AND " + " AND ".join(filters)) if filters else ""
 
+            links: List[Dict] = []
+
+            def add_links_from_text(message_text: str, date_cocoa: Optional[int], is_from_me: int, sender_handle: Optional[str]):
                 if not message_text:
-                    continue
+                    return
 
-                # Find URLs in text
                 urls = url_pattern.findall(message_text)
                 if not urls:
-                    continue
+                    return
 
-                # Convert timestamp
+                date = None
                 if date_cocoa:
-                    cocoa_epoch = datetime(2001, 1, 1)
                     date = cocoa_epoch + timedelta(seconds=date_cocoa / 1_000_000_000)
-                else:
-                    date = None
 
                 for url in urls:
-                    # Clean URL (remove trailing punctuation)
                     url = url.rstrip('.,;:!?)')
-
                     links.append({
                         "url": url,
                         "message_text": message_text[:200] + "..." if len(message_text) > 200 else message_text,
@@ -1816,12 +1789,59 @@ class MessagesInterface:
                         "is_from_me": bool(is_from_me),
                         "sender_handle": sender_handle or ("me" if is_from_me else "unknown")
                     })
-
                     if len(links) >= limit:
-                        break
+                        return
 
+            # Pass 1 (fast): only messages with plain text containing "http".
+            cursor.execute(
+                f"""
+                SELECT
+                    m.text,
+                    m.date,
+                    m.is_from_me,
+                    h.id as sender_handle
+                FROM message m
+                LEFT JOIN handle h ON m.handle_id = h.ROWID
+                WHERE m.text IS NOT NULL
+                  AND m.text LIKE '%http%'
+                {filter_sql}
+                ORDER BY m.date DESC
+                LIMIT ?
+                """,
+                (*params_base, limit * 4),
+            )
+            for text, date_cocoa, is_from_me, sender_handle in cursor.fetchall():
+                add_links_from_text(text or "", date_cocoa, is_from_me, sender_handle)
                 if len(links) >= limit:
                     break
+
+            # Pass 2 (slower): messages with null text but data-detected; parse attributedBody.
+            remaining = limit - len(links)
+            if remaining > 0:
+                cursor.execute(
+                    f"""
+                    SELECT
+                        m.attributedBody,
+                        m.date,
+                        m.is_from_me,
+                        h.id as sender_handle
+                    FROM message m
+                    LEFT JOIN handle h ON m.handle_id = h.ROWID
+                    WHERE m.text IS NULL
+                      AND m.attributedBody IS NOT NULL
+                      AND m.was_data_detected = 1
+                    {filter_sql}
+                    ORDER BY m.date DESC
+                    LIMIT ?
+                    """,
+                    (*params_base, min(5000, remaining * 10)),
+                )
+                for attributed_body, date_cocoa, is_from_me, sender_handle in cursor.fetchall():
+                    message_text = extract_text_from_blob(attributed_body) if attributed_body else None
+                    if message_text:
+                        add_links_from_text(message_text, date_cocoa, is_from_me, sender_handle)
+                        if len(links) >= limit:
+                            break
 
             conn.close()
             logger.info(f"Found {len(links)} links")
@@ -2322,21 +2342,34 @@ class MessagesInterface:
             }
 
             # Get recent messages with context
-            cursor.execute("""
-                SELECT
-                    m.text,
-                    m.attributedBody,
-                    m.date,
-                    m.is_from_me,
-                    h.id as phone,
-                    m.ROWID
-                FROM message m
-                JOIN handle h ON m.handle_id = h.ROWID
-                WHERE m.date >= ?
-                    AND (m.associated_message_type IS NULL OR m.associated_message_type = 0)
-                    AND m.item_type = 0
-                ORDER BY h.id, m.date DESC
-            """, (cutoff_cocoa,))
+            # Windowed query: only keep the most recent N messages per handle.
+            # This avoids scanning/processing every message within the time range for high-volume users.
+            per_contact_limit = max(50, limit)
+            cursor.execute(
+                """
+                WITH recent AS (
+                    SELECT
+                        m.text,
+                        m.attributedBody,
+                        m.date,
+                        m.is_from_me,
+                        h.id AS phone,
+                        m.ROWID AS rowid,
+                        ROW_NUMBER() OVER (PARTITION BY h.id ORDER BY m.date DESC) AS rn
+                    FROM message m
+                    JOIN handle h ON m.handle_id = h.ROWID
+                    WHERE m.date >= ?
+                        AND (m.associated_message_type IS NULL OR m.associated_message_type = 0)
+                        AND m.item_type = 0
+                        AND (m.text IS NOT NULL OR m.attributedBody IS NOT NULL)
+                )
+                SELECT text, attributedBody, date, is_from_me, phone, rowid
+                FROM recent
+                WHERE rn <= ?
+                ORDER BY phone, date DESC
+                """,
+                (cutoff_cocoa, per_contact_limit),
+            )
 
             rows = cursor.fetchall()
 

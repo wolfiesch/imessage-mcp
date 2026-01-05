@@ -9,7 +9,7 @@ iMessage Gateway CLI for macOS. Send and read iMessages through Claude Code with
 **Architecture: Gateway CLI (MCP-Free)**
 - 19x faster than MCP alternatives (40ms vs 763ms)
 - Direct Python CLI via Bash tool calls
-- 28 commands across messaging, reading, groups, analytics, and RAG
+- 27 commands across messaging, reading, groups, analytics, and RAG
 
 ## Build & Test Commands
 
@@ -48,7 +48,7 @@ Claude Code ──(Bash tool)──> gateway/imessage_client.py
                                             └── UnifiedRetriever for semantic search
 ```
 
-### Available Commands (28 total)
+### Available Commands (27 total)
 
 | Category | Commands |
 |----------|----------|
@@ -57,7 +57,7 @@ Claude Code ──(Bash tool)──> gateway/imessage_client.py
 | **Groups (2)** | `groups`, `group-messages` |
 | **Analytics (3)** | `analytics`, `followup`, `reactions` |
 | **Contacts (1)** | `contacts` |
-| **RAG (7)** | `index`, `search`, `ask`, `stats`, `clear`, `sources`, `migrate` |
+| **RAG (6)** | `index`, `search`, `ask`, `stats`, `clear`, `sources` |
 
 ### Path Resolution (Critical)
 
@@ -86,7 +86,7 @@ Messages are stored in `~/Library/Messages/chat.db` (requires Full Disk Access):
 
 | File | Purpose |
 |------|---------|
-| `gateway/imessage_client.py` | Gateway CLI entry point (28 commands) |
+| `gateway/imessage_client.py` | Gateway CLI entry point (27 commands) |
 | `src/messages_interface.py` | AppleScript send + chat.db read |
 | `src/contacts_manager.py` | Contact lookup from JSON config |
 | `src/rag/unified/retriever.py` | UnifiedRetriever for semantic search |

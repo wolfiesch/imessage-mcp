@@ -79,7 +79,7 @@ python3 gateway/imessage_client.py recent --limit 20 --json
 python3 gateway/imessage_client.py send "John" "Hey, are you free for coffee?"
 ```
 
-## Command Reference (28 Commands)
+## Command Reference (27 Commands)
 
 ### Messaging (3)
 
@@ -164,7 +164,7 @@ python3 gateway/imessage_client.py reactions "John" --json
 python3 gateway/imessage_client.py contacts --json
 ```
 
-### Semantic Search / RAG (7)
+### Semantic Search / RAG (6)
 
 ```bash
 # Index iMessages for semantic search
@@ -193,9 +193,6 @@ python3 gateway/imessage_client.py sources --json
 
 # Clear indexed data
 python3 gateway/imessage_client.py clear --source=imessage --force
-
-# Migrate from legacy RAG
-python3 gateway/imessage_client.py migrate
 ```
 
 ## Architecture
