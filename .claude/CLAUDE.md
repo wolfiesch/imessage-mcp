@@ -4,7 +4,12 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-iMessage MCP server for macOS. Send and read iMessages through Claude with contact intelligence and fuzzy name matching.
+iMessage Gateway CLI for macOS. Send and read iMessages through Claude Code with contact intelligence, fuzzy name matching, and semantic search.
+
+**Architecture: Gateway CLI (MCP-Free)**
+- 19x faster than MCP alternatives (40ms vs 763ms)
+- Direct Python CLI via Bash tool calls
+- 27 commands across messaging, reading, groups, analytics, and RAG
 
 ## Build & Test Commands
 
@@ -21,66 +26,47 @@ pytest --cov=src tests/
 # Sync contacts from macOS Contacts app
 python3 scripts/sync_contacts.py
 
-# Test MCP protocol directly
-python3 scripts/test_mcp_protocol.py
-
-# Start MCP server manually (for debugging)
-python3 mcp_server/server.py
-
-# Verify MCP server registration
-claude mcp list
+# Verify CLI
+python3 gateway/imessage_client.py --help
 ```
 
 ## Architecture
 
-### MCP Server Flow
+### Gateway CLI Flow
 
 ```
-Claude Code ──(JSON-RPC/stdio)──> mcp_server/server.py
-                                        │
-                                        ├── src/contacts_manager.py
-                                        │       └── Loads contacts from config/contacts.json
-                                        │
-                                        ├── src/messages_interface.py
-                                        │       ├── AppleScript → Messages.app (send)
-                                        │       └── SQLite → ~/Library/Messages/chat.db (read)
-                                        │
-                                        └── src/contacts_sync.py
-                                                └── PyObjC → macOS Contacts.app
+Claude Code ──(Bash tool)──> gateway/imessage_client.py
+                                    │
+                                    ├── src/contacts_manager.py
+                                    │       └── Loads contacts from config/contacts.json
+                                    │
+                                    ├── src/messages_interface.py
+                                    │       ├── AppleScript → Messages.app (send)
+                                    │       └── SQLite → ~/Library/Messages/chat.db (read)
+                                    │
+                                    └── src/rag/unified/
+                                            └── UnifiedRetriever for semantic search
 ```
 
-### Available MCP Tools
+### Available Commands (27 total)
 
-| Tool | Description |
-|------|-------------|
-| `send_message` | Send iMessage by contact name |
-| `get_recent_messages` | Get messages with specific contact |
-| `list_contacts` | List configured contacts |
-| `get_all_recent_conversations` | Get recent messages across ALL contacts |
-| `search_messages` | Full-text search across messages |
-| `get_messages_by_phone` | Get messages by phone number (no contact needed) |
+| Category | Commands |
+|----------|----------|
+| **Messaging (3)** | `send`, `send-by-phone`, `add-contact` |
+| **Reading (12)** | `messages`, `find`, `recent`, `unread`, `handles`, `unknown`, `attachments`, `voice`, `links`, `thread`, `scheduled`, `summary` |
+| **Groups (2)** | `groups`, `group-messages` |
+| **Analytics (3)** | `analytics`, `followup`, `reactions` |
+| **Contacts (1)** | `contacts` |
+| **RAG (6)** | `index`, `search`, `ask`, `stats`, `clear`, `sources` |
 
 ### Path Resolution (Critical)
 
-MCP servers are started from arbitrary working directories. All paths in `server.py` use:
+All paths use absolute resolution from script location:
 
 ```python
-PROJECT_ROOT = Path(__file__).parent.parent
-CONFIG_PATH = PROJECT_ROOT / "config" / "mcp_server.json"
+SCRIPT_DIR = Path(__file__).parent
+PROJECT_ROOT = SCRIPT_DIR.parent
 ```
-
-Always use absolute paths resolved from `PROJECT_ROOT`, never relative paths.
-
-### Import Pattern
-
-The server uses `sys.path` insertion to enable imports from `src/`:
-
-```python
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from src.messages_interface import MessagesInterface
-```
-
-This is necessary because MCP servers run as standalone processes, not as installed packages.
 
 ### macOS Messages Database
 
@@ -89,8 +75,6 @@ Messages are stored in `~/Library/Messages/chat.db` (requires Full Disk Access):
 - **text** column: Plain text (older messages)
 - **attributedBody** column: Binary blob (macOS Ventura+)
 
-The `extract_text_from_blob()` function in `messages_interface.py` handles parsing both formats.
-
 ### Contact Resolution
 
 `ContactsManager` provides name → phone lookup:
@@ -98,46 +82,34 @@ The `extract_text_from_blob()` function in `messages_interface.py` handles parsi
 2. Partial match (contains)
 3. Fuzzy matching with fuzzywuzzy (threshold 0.85)
 
-Phone normalization: `+1 (415) 555-1234` → `14155551234`
-
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `mcp_server/server.py` | MCP server entry point, tool handlers |
+| `gateway/imessage_client.py` | Gateway CLI entry point (27 commands) |
 | `src/messages_interface.py` | AppleScript send + chat.db read |
 | `src/contacts_manager.py` | Contact lookup from JSON config |
-| `src/contacts_sync.py` | macOS Contacts sync + fuzzy matching |
-| `config/contacts.json` | Contact data (gitignored - use sync script) |
-| `config/mcp_server.json` | Server configuration |
+| `src/rag/unified/retriever.py` | UnifiedRetriever for semantic search |
+| `config/contacts.json` | Contact data (gitignored) |
+| `skills/imessage-gateway/SKILL.md` | Claude Code skill definition |
 
 ## Claude Code Skill
 
-This project includes a skill at `.claude/skills/imessage-texting/SKILL.md` with usage examples for each MCP tool.
+Use `skills/imessage-gateway/SKILL.md` for natural language command mapping.
 
 ## Troubleshooting
 
-**MCP tools not appearing:**
-```bash
-# Check server is registered
-claude mcp list
-
-# Re-register if needed
-claude mcp add -t stdio imessage-mcp -- python3 /path/to/mcp_server/server.py
-```
-
 **"Contact not found":**
 ```bash
-# Sync contacts from macOS
 python3 scripts/sync_contacts.py
 ```
 
 **Messages showing `[message content not available]`:**
 - Check Full Disk Access in System Settings
-- Some messages are attachment-only (no text content)
+- Some messages are attachment-only
 
 ## Dependencies
 
-Core: `mcp>=1.0.0`, `fuzzywuzzy`, `python-Levenshtein`, `pyobjc-framework-Contacts`
+Core: `chromadb`, `openai`, `fuzzywuzzy`, `python-Levenshtein`, `pyobjc-framework-Contacts`
 
 Install: `pip install -r requirements.txt`

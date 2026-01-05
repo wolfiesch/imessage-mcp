@@ -1,10 +1,15 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with this repository.
 
 ## Project Overview
 
-iMessage MCP server for macOS. Send and read iMessages through Claude with contact intelligence and fuzzy name matching.
+iMessage Gateway CLI for macOS. Send and read iMessages through Claude Code with contact intelligence, fuzzy name matching, and semantic search (RAG).
+
+**Architecture: Gateway CLI (MCP-Free)**
+- 19x faster than MCP-based alternatives (40ms vs 763ms per operation)
+- Direct Python CLI execution via Bash tool calls
+- No MCP framework dependency
 
 ## Build & Test Commands
 
@@ -21,79 +26,79 @@ pytest --cov=src tests/
 # Sync contacts from macOS Contacts app
 python3 scripts/sync_contacts.py
 
-# Test MCP protocol directly
-python3 scripts/test_mcp_protocol.py
-
-# Start MCP server manually (for debugging)
-python3 mcp_server/server.py
-
-# Verify MCP server registration
-claude mcp list
+# Run performance benchmarks
+python3 -m Texting.benchmarks.run_benchmarks
 ```
 
 ## Architecture
 
-### MCP Server Flow
+### Gateway CLI Flow
 
 ```
-Claude Code ──(JSON-RPC/stdio)──> mcp_server/server.py
-                                        │
-                                        ├── mcp_server/handlers/     # Tool handlers by domain
-                                        │       ├── messaging.py     # send_message, send_message_by_phone
-                                        │       ├── reading.py       # get_recent_messages, search, attachments
-                                        │       ├── contacts.py      # add_contact, list_contacts
-                                        │       ├── groups.py        # list_group_chats, get_group_messages
-                                        │       ├── rag.py           # index_knowledge, search_knowledge
-                                        │       └── analytics.py     # get_conversation_analytics, follow-ups
-                                        │
-                                        ├── mcp_server/utils/        # Shared utilities
-                                        │       ├── validation.py    # Input validation helpers
-                                        │       ├── responses.py     # Response formatting
-                                        │       └── errors.py        # Error handling utilities
-                                        │
-                                        ├── src/contacts_manager.py
-                                        │       └── Loads contacts from config/contacts.json
-                                        │
-                                        ├── src/messages_interface.py
-                                        │       ├── AppleScript → Messages.app (send)
-                                        │       └── SQLite → ~/Library/Messages/chat.db (read)
-                                        │
-                                        └── src/contacts_sync.py
-                                                └── PyObjC → macOS Contacts.app
+Claude Code ──(Bash tool)──> gateway/imessage_client.py
+                                    │
+                                    ├── src/contacts_manager.py
+                                    │       └── Loads contacts from config/contacts.json
+                                    │
+                                    ├── src/messages_interface.py
+                                    │       ├── AppleScript → Messages.app (send)
+                                    │       └── SQLite → ~/Library/Messages/chat.db (read)
+                                    │
+                                    └── src/rag/unified/
+                                            ├── retriever.py    # UnifiedRetriever facade
+                                            ├── imessage_indexer.py  # Incremental iMessage indexing
+                                            └── index_state.py  # Watermark tracking
 ```
 
-### Available MCP Tools
+### Available Commands (27 total)
 
-| Tool | Description |
-|------|-------------|
-| `send_message` | Send iMessage by contact name |
-| `get_recent_messages` | Get messages with specific contact |
-| `list_contacts` | List configured contacts |
-| `get_all_recent_conversations` | Get recent messages across ALL contacts |
-| `search_messages` | Full-text search across messages |
-| `get_messages_by_phone` | Get messages by phone number (no contact needed) |
+| Category | Commands |
+|----------|----------|
+| **Messaging (3)** | `send`, `send-by-phone`, `add-contact` |
+| **Reading (12)** | `messages`, `find`, `recent`, `unread`, `handles`, `unknown`, `attachments`, `voice`, `links`, `thread`, `scheduled`, `summary` |
+| **Groups (2)** | `groups`, `group-messages` |
+| **Analytics (3)** | `analytics`, `followup`, `reactions` |
+| **Contacts (1)** | `contacts` |
+| **RAG (6)** | `index`, `search`, `ask`, `stats`, `clear`, `sources` |
+
+### Key Command Examples
+
+```bash
+# Send message to contact
+python3 gateway/imessage_client.py send "John" "Hello!"
+
+# Send to phone number directly
+python3 gateway/imessage_client.py send-by-phone "+14155551234" "Hi!"
+
+# Find messages with keyword search
+python3 gateway/imessage_client.py find "John" --query "meeting" --json
+
+# Semantic search (RAG)
+python3 gateway/imessage_client.py search "dinner plans with Sarah" --json
+
+# Index iMessages for semantic search
+python3 gateway/imessage_client.py index --source=imessage --days 30
+```
 
 ### Path Resolution (Critical)
 
-MCP servers are started from arbitrary working directories. All paths in `server.py` use:
+All paths in the Gateway CLI use:
 
 ```python
-PROJECT_ROOT = Path(__file__).parent.parent
-CONFIG_PATH = PROJECT_ROOT / "config" / "mcp_server.json"
+SCRIPT_DIR = Path(__file__).parent
+PROJECT_ROOT = SCRIPT_DIR.parent
 ```
 
 Always use absolute paths resolved from `PROJECT_ROOT`, never relative paths.
 
 ### Import Pattern
 
-The server uses `sys.path` insertion to enable imports from `src/`:
+The CLI uses `sys.path` insertion to enable imports from `src/`:
 
 ```python
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.messages_interface import MessagesInterface
 ```
-
-This is necessary because MCP servers run as standalone processes, not as installed packages.
 
 ### macOS Messages Database
 
@@ -137,28 +142,62 @@ Returns best score normalized to 0-1.
 
 | File | Purpose |
 |------|---------|
-| `mcp_server/server.py` | MCP server entry point, tool registry |
-| `mcp_server/config.py` | Configuration and path resolution |
-| `mcp_server/handlers/` | Tool handlers organized by domain |
-| `mcp_server/utils/` | Shared validation, response, error utilities |
+| `gateway/imessage_client.py` | Gateway CLI entry point (27 commands) |
 | `src/messages_interface.py` | AppleScript send + chat.db read |
 | `src/contacts_manager.py` | Contact lookup from JSON config |
 | `src/contacts_sync.py` | macOS Contacts sync + fuzzy matching |
+| `src/rag/unified/retriever.py` | UnifiedRetriever facade for RAG |
+| `src/rag/unified/imessage_indexer.py` | Incremental iMessage indexing |
 | `config/contacts.json` | Contact data (gitignored - use sync script) |
-| `config/mcp_server.json` | Server configuration |
+| `skills/imessage-gateway/SKILL.md` | Claude Code skill definition |
+
+## RAG System
+
+The unified RAG system supports semantic search across multiple sources:
+
+### Sources
+- **imessage**: iMessage conversations
+- **superwhisper**: Voice note transcriptions
+- **notes**: Markdown documents
+- **local**: Both superwhisper + notes
+- **gmail/slack/calendar**: Via Rube integration (pre-fetched data)
+
+### Incremental Indexing
+
+Uses `IndexState` watermarking for efficient updates:
+- Tracks last indexed timestamp per source
+- Second run with no new content: <1s (vs 35s full re-index)
+- `--full` flag forces complete re-index
+
+### Commands
+
+```bash
+# Index specific source
+python3 gateway/imessage_client.py index --source=imessage --days 30
+
+# Semantic search
+python3 gateway/imessage_client.py search "query" --json
+
+# AI-formatted context
+python3 gateway/imessage_client.py ask "What did John say about the project?"
+
+# Knowledge base stats
+python3 gateway/imessage_client.py stats --json
+```
+
+## Claude Code Skill
+
+This project includes a skill at `skills/imessage-gateway/SKILL.md` with command mappings for natural language access.
 
 ## Troubleshooting
 
-**MCP tools not appearing:**
+**Commands not working:**
 ```bash
-# Check server is registered
-claude mcp list
+# Verify CLI works
+python3 gateway/imessage_client.py --help
 
-# Re-register if needed
-claude mcp add -t stdio imessage-mcp -- python3 /path/to/mcp_server/server.py
-
-# Check logs
-tail -f logs/mcp_server.log
+# Check Python path
+which python3
 ```
 
 **"Contact not found":**
@@ -179,6 +218,10 @@ python3 scripts/sync_contacts.py
 
 ## Dependencies
 
-Core: `mcp>=1.0.0`, `fuzzywuzzy`, `python-Levenshtein`, `pyobjc-framework-Contacts`
+Core: `chromadb>=0.4.0`, `openai>=1.0.0`, `fuzzywuzzy`, `python-Levenshtein`, `pyobjc-framework-Contacts`
 
 Install: `pip install -r requirements.txt`
+
+## MCP Server (Archived)
+
+The MCP server has been archived to `mcp_server_archive/`. See `mcp_server_archive/ARCHIVED.md` for restoration if needed.
