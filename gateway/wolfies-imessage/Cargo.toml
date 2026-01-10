@@ -1,0 +1,74 @@
+[package]
+name = "wolfies-imessage"
+version = "0.1.0"
+edition = "2021"
+description = "Fast Rust CLI for iMessage - direct SQLite queries and AppleScript sending"
+authors = ["Wolfgang Schoenberger"]
+
+[[bin]]
+name = "wolfies-imessage"
+path = "src/main.rs"
+
+[[bin]]
+name = "wolfies-imessage-daemon"
+path = "src/bin/wolfies-imessage-daemon.rs"
+
+[[bin]]
+name = "wolfies-imessage-client"
+path = "src/bin/wolfies-imessage-client.rs"
+
+[dependencies]
+# CLI parsing
+clap = { version = "4", features = ["derive"] }
+
+# Database
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Binary plist parsing (for attributedBody blobs)
+plist = "1"
+
+# Fuzzy string matching
+strsim = "0.11"
+
+# Date/time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# macOS utilities
+dirs = "6.0"
+
+# Regex for URL extraction
+regex = "1"
+
+# Parallel execution (Phase 4B)
+rayon = "1.8"
+
+# Daemon mode (Phase 4C)
+uuid = { version = "1.7", features = ["v4", "serde"] }
+daemonize = "0.5"
+shellexpand = "3.1"
+libc = "0.2"
+
+# Async runtime (for daemon client - optional, not used yet)
+tokio = { version = "1", features = ["rt", "net", "io-util", "time", "sync"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true
