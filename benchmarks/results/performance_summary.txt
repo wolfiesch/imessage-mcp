@@ -1,0 +1,75 @@
+================================================================================
+RUST vs PYTHON PERFORMANCE BENCHMARK RESULTS
+Generated: 01/10/2026 04:15 AM PST
+================================================================================
+
+OVERALL STATISTICS:
+  Average Speedup: 6.98x
+  Median Speedup:  9.02x
+  Min Speedup:     1.94x (unknown command)
+  Max Speedup:     11.90x (unread command)
+
+PERFORMANCE BY COMMAND:
+
+Reading Commands (11.65x avg):
+  unread (4.6ms vs 54.7ms)
+  ████████████ 11.90x
+
+  recent (4.7ms vs 53.1ms)
+  ███████████ 11.39x
+
+Analytics Commands (7.28x avg):
+  reactions (5.2ms vs 50.5ms)
+  ██████████ 9.76x
+
+  followup (6.7ms vs 60.8ms)
+  █████████ 9.02x
+
+  analytics (22.0ms vs 67.1ms)
+  ███ 3.05x
+
+Discovery Commands (7.60x avg):
+  handles (5.2ms vs 52.5ms)
+  ██████████ 10.18x
+
+  discover (33.5ms vs 89.8ms)
+  ███ 2.68x
+
+  unknown (30.7ms vs 59.5ms)
+  ██ 1.94x
+
+Groups Commands (2.94x avg):
+  groups (23.4ms vs 68.9ms)
+  ███ 2.94x
+
+================================================================================
+LATENCY COMPARISON (milliseconds):
+
+Command          Rust    Python  Difference
+--------         ----    ------  ----------
+unread            4.6     54.7    -50.1ms
+recent            4.7     53.1    -48.4ms
+reactions         5.2     50.5    -45.3ms
+handles           5.2     52.5    -47.3ms
+followup          6.7     60.8    -54.1ms
+analytics        22.0     67.1    -45.1ms
+groups           23.4     68.9    -45.5ms
+unknown          30.7     59.5    -28.8ms
+discover         33.5     89.8    -56.3ms
+
+Average:         14.9     61.9    -47.0ms
+
+================================================================================
+KEY INSIGHTS:
+
+✓ Rust eliminates 30-50ms Python interpreter startup overhead
+✓ Simple queries show 10-12x speedup (database-bound operations)
+✓ Complex queries show 2-3x speedup (algorithm-bound operations)
+✓ All commands now run in <35ms (excellent interactive latency)
+✓ Contact loading is the bottleneck for discovery commands
+
+RECOMMENDATION:
+The Rust CLI is production-ready for high-performance scenarios.
+Consider implementing daemon mode for even lower latency.
+
+================================================================================
