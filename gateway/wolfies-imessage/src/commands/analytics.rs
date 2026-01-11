@@ -1,26 +1,20 @@
 //! Analytics commands: analytics, followup.
 //!
 //! CHANGELOG:
+//! - 01/10/2026 - Refactored to use shared db::helpers (Phase 5) (Claude)
 //! - 01/10/2026 - Added parallel query execution (Phase 4B) with rayon (Claude)
 //! - 01/10/2026 - Added contact caching (Phase 4A) - accepts Arc<ContactsManager> (Claude)
 //! - 01/10/2026 - Initial stub implementation (Claude)
 //! - 01/10/2026 - Implemented analytics command (Claude)
 //! - 01/10/2026 - Implemented follow-up detection command (Claude)
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use rayon::prelude::*;
-use rusqlite::{self, Connection};
 use serde::Serialize;
 use std::sync::Arc;
 
 use crate::contacts::manager::ContactsManager;
-use crate::db::{connection::open_db, queries};
-
-#[derive(Debug, Serialize)]
-struct TopContact {
-    phone: String,
-    message_count: i64,
-}
+use crate::db::{connection::open_db, helpers, queries};
 
 #[derive(Debug, Serialize)]
 struct Analytics {
@@ -30,7 +24,7 @@ struct Analytics {
     avg_daily_messages: f64,
     busiest_hour: Option<i64>,
     busiest_day: Option<String>,
-    top_contacts: Vec<TopContact>,
+    top_contacts: Vec<helpers::TopContact>,
     attachment_count: i64,
     reaction_count: i64,
     analysis_period_days: u32,
@@ -62,96 +56,6 @@ struct FollowUpReport {
 }
 
 // ============================================================================
-// Helper functions for parallel query execution (Phase 4B)
-// ============================================================================
-
-/// Query message counts (total, sent, received).
-fn query_message_counts(conn: &Connection, cutoff_cocoa: i64, phone: Option<&str>) -> Result<(i64, i64, i64)> {
-    if let Some(p) = phone {
-        let mut stmt = conn.prepare(queries::ANALYTICS_MESSAGE_COUNTS_PHONE)?;
-        let params: &[&dyn rusqlite::ToSql] = &[&cutoff_cocoa, &p];
-        let row = stmt.query_row(params, |row: &rusqlite::Row| {
-            Ok((
-                row.get::<_, i64>(0).unwrap_or(0),
-                row.get::<_, i64>(1).unwrap_or(0),
-                row.get::<_, i64>(2).unwrap_or(0),
-            ))
-        }).unwrap_or((0, 0, 0));
-        Ok(row)
-    } else {
-        let mut stmt = conn.prepare(queries::ANALYTICS_MESSAGE_COUNTS)?;
-        let row = stmt.query_row(&[&cutoff_cocoa], |row: &rusqlite::Row| {
-            Ok((
-                row.get::<_, i64>(0).unwrap_or(0),
-                row.get::<_, i64>(1).unwrap_or(0),
-                row.get::<_, i64>(2).unwrap_or(0),
-            ))
-        }).unwrap_or((0, 0, 0));
-        Ok(row)
-    }
-}
-
-/// Query busiest hour of day.
-fn query_busiest_hour(conn: &Connection, cutoff_cocoa: i64, phone: Option<&str>) -> Result<Option<i64>> {
-    if let Some(p) = phone {
-        let mut stmt = conn.prepare(queries::ANALYTICS_BUSIEST_HOUR_PHONE)?;
-        let params: &[&dyn rusqlite::ToSql] = &[&cutoff_cocoa, &p];
-        Ok(stmt.query_row(params, |row: &rusqlite::Row| row.get::<_, i64>(0)).ok())
-    } else {
-        let mut stmt = conn.prepare(queries::ANALYTICS_BUSIEST_HOUR)?;
-        Ok(stmt.query_row(&[&cutoff_cocoa], |row: &rusqlite::Row| row.get::<_, i64>(0)).ok())
-    }
-}
-
-/// Query busiest day of week.
-fn query_busiest_day(conn: &Connection, cutoff_cocoa: i64, phone: Option<&str>) -> Result<Option<i64>> {
-    if let Some(p) = phone {
-        let mut stmt = conn.prepare(queries::ANALYTICS_BUSIEST_DAY_PHONE)?;
-        let params: &[&dyn rusqlite::ToSql] = &[&cutoff_cocoa, &p];
-        Ok(stmt.query_row(params, |row: &rusqlite::Row| row.get::<_, i64>(0)).ok())
-    } else {
-        let mut stmt = conn.prepare(queries::ANALYTICS_BUSIEST_DAY)?;
-        Ok(stmt.query_row(&[&cutoff_cocoa], |row: &rusqlite::Row| row.get::<_, i64>(0)).ok())
-    }
-}
-
-/// Query top contacts (only for global analytics).
-fn query_top_contacts(conn: &Connection, cutoff_cocoa: i64) -> Result<Vec<TopContact>> {
-    let mut stmt = conn.prepare(queries::ANALYTICS_TOP_CONTACTS)?;
-    let rows = stmt.query_map(&[&cutoff_cocoa], |row: &rusqlite::Row| {
-        Ok(TopContact {
-            phone: row.get(0)?,
-            message_count: row.get(1)?,
-        })
-    })?;
-    Ok(rows.filter_map(|r: rusqlite::Result<TopContact>| r.ok()).collect())
-}
-
-/// Query attachment count.
-fn query_attachments(conn: &Connection, cutoff_cocoa: i64, phone: Option<&str>) -> Result<i64> {
-    if let Some(p) = phone {
-        let mut stmt = conn.prepare(queries::ANALYTICS_ATTACHMENTS_PHONE)?;
-        let params: &[&dyn rusqlite::ToSql] = &[&cutoff_cocoa, &p];
-        Ok(stmt.query_row(params, |row: &rusqlite::Row| row.get::<_, i64>(0)).unwrap_or(0))
-    } else {
-        let mut stmt = conn.prepare(queries::ANALYTICS_ATTACHMENTS)?;
-        Ok(stmt.query_row(&[&cutoff_cocoa], |row: &rusqlite::Row| row.get::<_, i64>(0)).unwrap_or(0))
-    }
-}
-
-/// Query reaction count.
-fn query_reactions(conn: &Connection, cutoff_cocoa: i64, phone: Option<&str>) -> Result<i64> {
-    if let Some(p) = phone {
-        let mut stmt = conn.prepare(queries::ANALYTICS_REACTIONS_PHONE)?;
-        let params: &[&dyn rusqlite::ToSql] = &[&cutoff_cocoa, &p];
-        Ok(stmt.query_row(params, |row: &rusqlite::Row| row.get::<_, i64>(0)).unwrap_or(0))
-    } else {
-        let mut stmt = conn.prepare(queries::ANALYTICS_REACTIONS)?;
-        Ok(stmt.query_row(&[&cutoff_cocoa], |row: &rusqlite::Row| row.get::<_, i64>(0)).unwrap_or(0))
-    }
-}
-
-// ============================================================================
 // Main analytics command with parallel execution
 // ============================================================================
 
@@ -176,19 +80,19 @@ pub fn analytics(contact: Option<&str>, days: u32, json: bool, contacts: &Arc<Co
         || {
             // Query 1: Message counts
             let conn = open_db().expect("Failed to open DB");
-            query_message_counts(&conn, cutoff_cocoa, phone_ref).expect("Query failed")
+            helpers::query_message_counts(&conn, cutoff_cocoa, phone_ref).expect("Query failed")
         },
         || rayon::join(
             || rayon::join(
                 || {
                     // Query 2: Busiest hour
                     let conn = open_db().expect("Failed to open DB");
-                    query_busiest_hour(&conn, cutoff_cocoa, phone_ref).expect("Query failed")
+                    helpers::query_busiest_hour(&conn, cutoff_cocoa, phone_ref).expect("Query failed")
                 },
                 || {
                     // Query 3: Busiest day
                     let conn = open_db().expect("Failed to open DB");
-                    query_busiest_day(&conn, cutoff_cocoa, phone_ref).expect("Query failed")
+                    helpers::query_busiest_day(&conn, cutoff_cocoa, phone_ref).expect("Query failed")
                 }
             ),
             || rayon::join(
@@ -196,7 +100,7 @@ pub fn analytics(contact: Option<&str>, days: u32, json: bool, contacts: &Arc<Co
                     // Query 4: Top contacts (only if no phone filter)
                     if phone_ref.is_none() {
                         let conn = open_db().expect("Failed to open DB");
-                        query_top_contacts(&conn, cutoff_cocoa).expect("Query failed")
+                        helpers::query_top_contacts(&conn, cutoff_cocoa).expect("Query failed")
                     } else {
                         Vec::new()
                     }
@@ -205,12 +109,12 @@ pub fn analytics(contact: Option<&str>, days: u32, json: bool, contacts: &Arc<Co
                     || {
                         // Query 5: Attachments
                         let conn = open_db().expect("Failed to open DB");
-                        query_attachments(&conn, cutoff_cocoa, phone_ref).expect("Query failed")
+                        helpers::query_attachments(&conn, cutoff_cocoa, phone_ref).expect("Query failed")
                     },
                     || {
                         // Query 6: Reactions
                         let conn = open_db().expect("Failed to open DB");
-                        query_reactions(&conn, cutoff_cocoa, phone_ref).expect("Query failed")
+                        helpers::query_reactions(&conn, cutoff_cocoa, phone_ref).expect("Query failed")
                     }
                 )
             )
@@ -218,13 +122,8 @@ pub fn analytics(contact: Option<&str>, days: u32, json: bool, contacts: &Arc<Co
     );
 
     // Convert busiest day number to name
-    let days_of_week = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
     let busiest_day_name = busiest_day.and_then(|d| {
-        if d >= 0 && d < 7 {
-            Some(days_of_week[d as usize].to_string())
-        } else {
-            None
-        }
+        helpers::day_number_to_name(d).map(|s| s.to_string())
     });
 
     // Build analytics struct

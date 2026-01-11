@@ -3,6 +3,7 @@
 //! Exposes modules for use by daemon and client binaries.
 //!
 //! CHANGELOG:
+//! - 01/10/2026 - Added db::helpers for shared query functions (Phase 5) (Claude)
 //! - 01/10/2026 - Initial library structure (Phase 4C, Claude)
 
 // Core modules

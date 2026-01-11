@@ -331,6 +331,70 @@ LIMIT ?2
 "#;
 
 // ============================================================================
+// OPTIMIZED ANALYTICS (Combined queries for daemon performance)
+// ============================================================================
+
+/// Combined analytics query - computes all stats in single table scan.
+/// Uses single-pass aggregation with subqueries for busiest hour/day.
+/// Includes attachment count using cache_has_attachments column (no join needed).
+/// Returns: total, sent, received, reactions, attachments, busiest_hour, busiest_day
+/// Parameters: ?1 = cutoff_cocoa
+pub const ANALYTICS_COMBINED: &str = r#"
+SELECT
+    SUM(CASE WHEN associated_message_type IS NULL OR associated_message_type = 0 THEN 1 ELSE 0 END) as total,
+    SUM(CASE WHEN (associated_message_type IS NULL OR associated_message_type = 0) AND is_from_me = 1 THEN 1 ELSE 0 END) as sent,
+    SUM(CASE WHEN (associated_message_type IS NULL OR associated_message_type = 0) AND is_from_me = 0 THEN 1 ELSE 0 END) as received,
+    SUM(CASE WHEN associated_message_type BETWEEN 2000 AND 3005 THEN 1 ELSE 0 END) as reactions,
+    SUM(cache_has_attachments) as attachments,
+    (SELECT CAST((date / 1000000000 / 3600) % 24 AS INTEGER) FROM message WHERE date >= ?1 GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 1) as busiest_hour,
+    (SELECT CAST((date / 1000000000 / 86400 + 1) % 7 AS INTEGER) FROM message WHERE date >= ?1 GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 1) as busiest_day
+FROM message
+WHERE date >= ?1
+"#;
+
+/// Combined analytics with phone filter.
+/// Includes attachment count using cache_has_attachments column.
+/// Parameters: ?1 = cutoff_cocoa, ?2 = phone pattern
+pub const ANALYTICS_COMBINED_PHONE: &str = r#"
+SELECT
+    SUM(CASE WHEN m.associated_message_type IS NULL OR m.associated_message_type = 0 THEN 1 ELSE 0 END) as total,
+    SUM(CASE WHEN (m.associated_message_type IS NULL OR m.associated_message_type = 0) AND m.is_from_me = 1 THEN 1 ELSE 0 END) as sent,
+    SUM(CASE WHEN (m.associated_message_type IS NULL OR m.associated_message_type = 0) AND m.is_from_me = 0 THEN 1 ELSE 0 END) as received,
+    SUM(CASE WHEN m.associated_message_type BETWEEN 2000 AND 3005 THEN 1 ELSE 0 END) as reactions,
+    SUM(m.cache_has_attachments) as attachments,
+    (SELECT CAST((m2.date / 1000000000 / 3600) % 24 AS INTEGER)
+     FROM message m2 JOIN handle h2 ON m2.handle_id = h2.ROWID
+     WHERE m2.date >= ?1 AND h2.id LIKE '%' || ?2 || '%'
+     GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 1) as busiest_hour,
+    (SELECT CAST((m2.date / 1000000000 / 86400 + 1) % 7 AS INTEGER)
+     FROM message m2 JOIN handle h2 ON m2.handle_id = h2.ROWID
+     WHERE m2.date >= ?1 AND h2.id LIKE '%' || ?2 || '%'
+     GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 1) as busiest_day
+FROM message m
+JOIN handle h ON m.handle_id = h.ROWID
+WHERE m.date >= ?1 AND h.id LIKE '%' || ?2 || '%'
+"#;
+
+/// Optimized attachment count - uses message_attachment_join directly.
+/// Parameters: ?1 = cutoff_cocoa
+pub const ANALYTICS_ATTACHMENTS_FAST: &str = r#"
+SELECT COUNT(*)
+FROM message_attachment_join maj
+JOIN message m ON maj.message_id = m.ROWID
+WHERE m.date >= ?1
+"#;
+
+/// Optimized attachment count with phone filter.
+/// Parameters: ?1 = cutoff_cocoa, ?2 = phone pattern
+pub const ANALYTICS_ATTACHMENTS_FAST_PHONE: &str = r#"
+SELECT COUNT(*)
+FROM message_attachment_join maj
+JOIN message m ON maj.message_id = m.ROWID
+JOIN handle h ON m.handle_id = h.ROWID
+WHERE m.date >= ?1 AND h.id LIKE '%' || ?2 || '%'
+"#;
+
+// ============================================================================
 // FOLLOW-UP DETECTION QUERIES
 // ============================================================================
 
