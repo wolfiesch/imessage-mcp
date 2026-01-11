@@ -67,6 +67,23 @@ ORDER BY m.date DESC
 LIMIT ?1
 "#;
 
+/// Query to get recent messages.
+/// Parameters: ?1 = cutoff_cocoa, ?2 = limit
+pub const RECENT_MESSAGES: &str = r#"
+SELECT
+    m.text,
+    m.date,
+    m.is_from_me,
+    h.id as handle
+FROM message m
+LEFT JOIN handle h ON m.handle_id = h.ROWID
+WHERE m.date >= ?1
+  AND (m.associated_message_type IS NULL OR m.associated_message_type = 0)
+  AND m.text IS NOT NULL
+ORDER BY m.date DESC
+LIMIT ?2
+"#;
+
 /// Query to search messages by text.
 pub const TEXT_SEARCH: &str = r#"
 SELECT

@@ -281,22 +281,7 @@ pub fn query_recent_messages(
     cutoff_cocoa: i64,
     limit: u32,
 ) -> Result<Vec<RecentMessage>> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT
-            m.text,
-            m.date,
-            m.is_from_me,
-            h.id as handle
-        FROM message m
-        LEFT JOIN handle h ON m.handle_id = h.ROWID
-        WHERE m.date >= ?1
-          AND (m.associated_message_type IS NULL OR m.associated_message_type = 0)
-          AND m.text IS NOT NULL
-        ORDER BY m.date DESC
-        LIMIT ?2
-        "#,
-    )?;
+    let mut stmt = conn.prepare(queries::RECENT_MESSAGES)?;
 
     let rows = stmt.query_map([&cutoff_cocoa, &(limit as i64)], |row: &rusqlite::Row| {
         let date_cocoa: i64 = row.get(1)?;
@@ -444,16 +429,19 @@ pub fn cocoa_to_iso(cocoa_ns: i64) -> String {
 }
 
 /// Calculate days ago from Cocoa timestamp.
+/// Handles clock adjustments gracefully instead of panicking.
 pub fn days_ago_from_cocoa(cocoa_ns: i64) -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    // Handle potential clock adjustment gracefully
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards")
+        .unwrap_or_default()
         .as_secs() as i64;
 
     let msg_unix = queries::cocoa_to_unix(cocoa_ns);
-    (now - msg_unix) / 86400
+    // Ensure non-negative result even if clock is adjusted
+    ((now - msg_unix) / 86400).max(0)
 }
 
 #[cfg(test)]
